@@ -121,31 +121,65 @@
     });
   }
 
-  const canvas = document.getElementById("nerveCanvas");
-  if (!(canvas instanceof HTMLCanvasElement)) {
-    return;
-  }
-
-  const context = canvas.getContext("2d", { alpha: true });
-  if (!context) {
-    return;
-  }
-
   let width = 0;
   let height = 0;
   let pixelRatio = 1;
   let resizeTimer = 0;
   let animationFrame = 0;
   let frameTimer = 0;
-  let lastMobileFrame = 0;
   let lastFrameTime = 0;
   let activeUntil = 0;
   let paths = [];
   let stars = [];
   let source = { x: 0, y: 0 };
+  let networkWidth = 0;
+  let networkHeight = 0;
+  let networkMode = "";
+  let networkBuilds = 0;
+  let networkSignature = "";
+  let randomValue = Math.random;
 
-  const randomBetween = (min, max) => min + Math.random() * (max - min);
-  const choose = (items) => items[Math.floor(Math.random() * items.length)];
+  const canvas = document.getElementById("nerveCanvas");
+  window.__nerveDebug = {
+    snapshot: () => ({
+      width,
+      height,
+      pixelRatio,
+      backingWidth: canvas ? canvas.width : 0,
+      backingHeight: canvas ? canvas.height : 0,
+      pathCount: paths.length,
+      starCount: stars.length,
+      networkBuilds,
+      networkSignature,
+      networkWidth,
+      networkHeight,
+      networkMode,
+      scrollProgress,
+      canvasReady: false,
+    }),
+  };
+
+  if (!canvas || canvas.tagName !== "CANVAS" || typeof canvas.getContext !== "function") {
+    return;
+  }
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+
+  const makeRandom = (seed) => {
+    let value = seed >>> 0;
+    return () => {
+      value += 0x6d2b79f5;
+      let next = value;
+      next = Math.imul(next ^ (next >>> 15), next | 1);
+      next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
+      return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  const randomBetween = (min, max) => min + randomValue() * (max - min);
+  const choose = (items) => items[Math.floor(randomValue() * items.length)];
   const isCompactCanvas = () => window.innerWidth <= 760 || coarsePointer;
 
   const makeJaggedPath = (start, end, steps, jag, bias = 0) => {
@@ -163,7 +197,7 @@
     return points;
   };
 
-  const addStar = (point, depth, power, seed = Math.random()) => {
+  const addStar = (point, depth, power, seed = randomValue()) => {
     const rays = Math.round(randomBetween(6, 11));
     stars.push({
       x: point.x,
@@ -177,9 +211,22 @@
     });
   };
 
-  const addPath = (points, kind, depth, lineWidth, seed = Math.random()) => {
+  const addPath = (points, kind, depth, lineWidth, seed = randomValue()) => {
     paths.push({ points, kind, depth, lineWidth, seed });
   };
+
+  const writeProofState = () => {
+    root.dataset.nervePixelRatio = pixelRatio.toFixed(2);
+    root.dataset.nerveBacking = canvas ? `${canvas.width}x${canvas.height}` : "0x0";
+    root.dataset.nervePaths = String(paths.length);
+    root.dataset.nerveStars = String(stars.length);
+    root.dataset.nerveBuilds = String(networkBuilds);
+    root.dataset.nerveSignature = networkSignature;
+    root.dataset.nerveMode = networkMode;
+    root.dataset.nerveCanvasReady = String(canvasReady);
+  };
+
+  let canvasReady = true;
 
   const getPalette = () => {
     const light = body.classList.contains("is-light");
@@ -322,25 +369,31 @@
 
   const buildNetwork = () => {
     const compact = isCompactCanvas();
-    const primaryCount = compact ? 10 : 20;
-    const branchPerPrimary = compact ? 2 : 4;
-    const microPerPrimary = compact ? 1 : 2;
+    const primaryCount = compact ? 30 : 22;
+    const branchPerPrimary = compact ? 5 : 4;
+    const microPerPrimary = compact ? 2 : 2;
     // Full height spread — nerves fan from top to bottom like the reference
+    const seed = Math.round(width * 17 + height * 3 + (compact ? 1009 : 2003));
+    randomValue = makeRandom(seed);
+    networkWidth = width;
+    networkHeight = height;
+    networkMode = compact ? "compact" : "desktop";
+    networkBuilds += 1;
     const originY = height * 0.5;
-    const verticalSpan = height * (compact ? 2.8 : 3.6);
+    const verticalSpan = height * (compact ? 3.35 : 3.6);
 
     paths = [];
     stars = [];
-    source = { x: width * 1.38, y: originY };
+    source = { x: width * (compact ? 1.28 : 1.38), y: originY };
 
     for (let index = 0; index < primaryCount; index += 1) {
       const spread = (index / Math.max(1, primaryCount - 1) - 0.5) * verticalSpan;
       const endpoint = {
-        x: compact ? randomBetween(-width * 0.1, width * 0.72) : randomBetween(-width * 0.22, width * 0.58),
+        x: compact ? randomBetween(-width * 0.24, width * 0.86) : randomBetween(-width * 0.22, width * 0.58),
         y: originY + spread + randomBetween(-height * 0.08, height * 0.08),
       };
       const start = {
-        x: width * (compact ? randomBetween(1.08, 1.42) : randomBetween(1.12, 1.52)),
+        x: width * (compact ? randomBetween(0.96, 1.42) : randomBetween(1.12, 1.52)),
         y: originY + spread * randomBetween(0.08, 0.28) + randomBetween(-height * 0.18, height * 0.18),
       };
       const primary = makeJaggedPath(
@@ -352,19 +405,19 @@
       );
       // Thick bright primaries — closer to reference weight
       const depth = randomBetween(0.82, 1);
-      addPath(primary, "primary", depth, randomBetween(compact ? 1.4 : 2.2, compact ? 2.8 : 4.8), Math.random());
-      addStar(choose(primary.slice(1, 3)), depth, randomBetween(compact ? 0.7 : 0.9, compact ? 1.1 : 1.6));
-      if (!compact) {
-        addStar(choose(primary.slice(3, -2)), depth * 0.85, randomBetween(0.5, 1.0));
+      addPath(primary, "primary", depth, randomBetween(compact ? 2.05 : 2.2, compact ? 4.15 : 4.8), randomValue());
+      addStar(choose(primary.slice(1, 3)), depth, randomBetween(compact ? 0.82 : 0.9, compact ? 1.35 : 1.6));
+      if (!compact || index % 2 === 0) {
+        addStar(choose(primary.slice(3, -2)), depth * 0.85, randomBetween(compact ? 0.42 : 0.5, compact ? 0.86 : 1.0));
       }
 
       for (let branch = 0; branch < branchPerPrimary; branch += 1) {
         // More branching near the source (right side) — higher anchorIndex = closer to start
-        const anchorBias = Math.random() > 0.4 ? randomBetween(0.55, 0.92) : randomBetween(0.1, 0.55);
+        const anchorBias = randomValue() > 0.35 ? randomBetween(0.48, 0.94) : randomBetween(0.1, 0.55);
         const anchorIndex = Math.floor(anchorBias * (primary.length - 2)) + 1;
         const anchor = primary[Math.min(anchorIndex, primary.length - 2)];
-        const side = Math.random() > 0.5 ? 1 : -1;
-        const branchLength = randomBetween(width * 0.1, width * (compact ? 0.22 : 0.34)) * depth;
+        const side = randomValue() > 0.5 ? 1 : -1;
+        const branchLength = randomBetween(width * 0.1, width * (compact ? 0.31 : 0.34)) * depth;
         const branchEnd = {
           x: anchor.x - branchLength * randomBetween(0.3, 0.9),
           y: anchor.y + side * branchLength * randomBetween(0.2, 0.7),
@@ -372,21 +425,20 @@
         const branchPath = makeJaggedPath(
           anchor,
           branchEnd,
-          Math.round(randomBetween(4, compact ? 6 : 9)),
+          Math.round(randomBetween(4, compact ? 8 : 9)),
           { x: width * 0.022, y: height * 0.02 }
         );
         const branchDepth = depth * randomBetween(0.52, 0.82);
-        addPath(branchPath, "branch", branchDepth, randomBetween(0.55, compact ? 1.0 : 1.6), Math.random());
+        addPath(branchPath, "branch", branchDepth, randomBetween(0.68, compact ? 1.55 : 1.6), randomValue());
 
         // Stars at every branch junction
-        addStar(anchor, branchDepth, randomBetween(0.45, compact ? 0.75 : 1.1));
+        addStar(anchor, branchDepth, randomBetween(0.5, compact ? 0.95 : 1.1));
 
         // Two levels of twigs per branch
         for (let twig = 0; twig < 2; twig += 1) {
-          if (compact && twig > 0) break;
           const twigAnchor = choose(branchPath.slice(1, -1));
           const twigLength = branchLength * randomBetween(0.18, 0.42);
-          const twigSide = Math.random() > 0.5 ? 1 : -1;
+          const twigSide = randomValue() > 0.5 ? 1 : -1;
           const twigPath = makeJaggedPath(
             twigAnchor,
             {
@@ -396,8 +448,8 @@
             Math.round(randomBetween(3, 6)),
             { x: width * 0.014, y: height * 0.013 }
           );
-          addPath(twigPath, "twig", branchDepth * 0.72, randomBetween(0.28, compact ? 0.55 : 0.82), Math.random());
-          if (Math.random() > 0.5) {
+          addPath(twigPath, "twig", branchDepth * 0.72, randomBetween(0.32, compact ? 0.74 : 0.82), randomValue());
+          if (randomValue() > 0.38) {
             addStar(twigAnchor, branchDepth * 0.6, randomBetween(0.28, compact ? 0.5 : 0.7));
           }
         }
@@ -419,14 +471,19 @@
           "micro",
           depth * randomBetween(0.32, 0.58),
           randomBetween(0.18, compact ? 0.4 : 0.58),
-          Math.random()
+          randomValue()
         );
       }
     }
 
     stars = stars
       .sort((a, b) => b.power - a.power)
-      .slice(0, compact ? 22 : 55);
+      .slice(0, compact ? 92 : 58);
+    networkSignature = `${networkMode}:${paths.length}:${stars.length}:${Math.round(source.x)}:${Math.round(source.y)}:${paths
+      .slice(0, 8)
+      .map((path) => `${path.kind}:${Math.round(path.points[0].x)},${Math.round(path.points[0].y)}`)
+      .join("|")}`;
+    writeProofState();
   };
 
   const draw = (time = performance.now()) => {
@@ -438,7 +495,7 @@
     const compact = isCompactCanvas();
     const active = !reducedMotion;
     // Steady ~24fps on desktop, ~15fps on mobile — smooth for ambient motion, far cheaper.
-    const frameGap = compact ? 66 : 42;
+    const frameGap = compact ? 42 : 42;
 
     if (active && time - lastFrameTime < frameGap) {
       requestNerveDraw(Math.max(16, frameGap - (time - lastFrameTime)));
@@ -446,7 +503,6 @@
     }
 
     lastFrameTime = time;
-    lastMobileFrame = time;
 
     const motion = reducedMotion ? 0 : clamp(Math.abs(scrollVelocity) / 110, 0, 1);
     const palette = getPalette();
@@ -508,17 +564,27 @@
     animationFrame = window.requestAnimationFrame(draw);
   };
 
-  const resize = () => {
+  const resize = (forceRebuild = false) => {
     const compact = isCompactCanvas();
-    pixelRatio = Math.min(window.devicePixelRatio || 1, compact ? 0.6 : 0.75);
-    width = window.innerWidth;
-    height = window.innerHeight;
+    const nextWidth = window.innerWidth;
+    const nextHeight = window.innerHeight;
+    const nextPixelRatio = Math.min(window.devicePixelRatio || 1, compact ? 2 : 1.5);
+    const widthChanged = Math.abs(nextWidth - width) > 1;
+    const pixelRatioChanged = Math.abs(nextPixelRatio - pixelRatio) > 0.01;
+    const modeChanged = networkMode !== "" && networkMode !== (compact ? "compact" : "desktop");
+    const shouldRebuild = forceRebuild || paths.length === 0 || widthChanged || pixelRatioChanged || modeChanged;
+
+    pixelRatio = nextPixelRatio;
+    width = nextWidth;
+    height = nextHeight;
     canvas.width = Math.floor(width * pixelRatio);
     canvas.height = Math.floor(height * pixelRatio);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    buildNetwork();
+    if (shouldRebuild) {
+      buildNetwork();
+    }
     if (animationFrame) {
       window.cancelAnimationFrame(animationFrame);
       animationFrame = 0;
@@ -527,6 +593,7 @@
       window.clearTimeout(frameTimer);
       frameTimer = 0;
     }
+    writeProofState();
     requestNerveDraw();
   };
 
@@ -535,7 +602,26 @@
     resizeTimer = window.setTimeout(resize, 140);
   };
 
-  resize();
+  window.__nerveDebug = {
+    snapshot: () => ({
+      width,
+      height,
+      pixelRatio,
+      backingWidth: canvas.width,
+      backingHeight: canvas.height,
+      pathCount: paths.length,
+      starCount: stars.length,
+      networkBuilds,
+      networkSignature,
+      networkWidth,
+      networkHeight,
+      networkMode,
+      scrollProgress,
+      canvasReady: true,
+    }),
+  };
+
+  resize(true);
   window.addEventListener("resize", requestResize, { passive: true });
   window.addEventListener("pageshow", () => wakeCanvas(260));
 })();

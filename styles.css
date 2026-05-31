@@ -916,7 +916,10 @@ button:focus-visible {
   }
 
   .background-field {
-    opacity: 0.66;
+    background:
+      radial-gradient(circle at 96% 34%, rgba(255, 255, 255, 0.18), transparent 38%),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.36) 50%, rgba(0, 0, 0, 0.1));
+    opacity: 0.82;
   }
 
   body.is-light .background-field {
@@ -959,7 +962,7 @@ button:focus-visible {
   }
 
   .nerve-canvas {
-    opacity: 0.84;
+    opacity: 0.96;
   }
 
   .expertise-card,
@@ -970,11 +973,16 @@ button:focus-visible {
   }
 
   body::before {
-    opacity: 0.12;
+    background-size: 58px 58px;
+    opacity: 0.17;
   }
 
   body::after {
-    opacity: 0.48;
+    background:
+      radial-gradient(circle at 96% 34%, rgba(255, 255, 255, 0.16), transparent 35%),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 24%, transparent 70%, rgba(255, 255, 255, 0.1)),
+      linear-gradient(180deg, transparent 0 52%, rgba(0, 0, 0, 0.32));
+    opacity: 0.58;
   }
 
   body.is-light .nerve-canvas {
