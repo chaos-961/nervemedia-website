@@ -13,11 +13,18 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M8 45V19h8l12 15V19h8v26h-8L16 30v15z' fill='%23fff'/%3E%3Cpath d='M42 45V19h5l5 13 5-13h5v26h-6V31l-4 10h-1l-4-10v14z' fill='%23fff'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="styles.css?v=5" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Expanded:wght@600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=12" />
   </head>
   <body>
     <canvas class="nerve-canvas" id="nerveCanvas" aria-hidden="true"></canvas>
     <div class="background-field" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
     <div class="scroll-progress" aria-hidden="true"></div>
 
     <header class="site-header" data-pulse-item>
@@ -25,7 +32,7 @@
         <span class="brand-mark">NERVE MEDIA</span>
       </a>
 
-      <a class="whatsapp-button magnetic" href="https://wa.me/96176087895" target="_blank" rel="noopener">
+      <a class="whatsapp-button" href="https://wa.me/96176087895" target="_blank" rel="noopener">
         <span class="whatsapp-dot" aria-hidden="true"></span>
         <span>WhatsApp</span>
       </a>
@@ -36,14 +43,14 @@
         <div class="hero-copy" data-reveal data-pulse-item>
           <p class="eyebrow">Marketing studio / Beirut</p>
           <h1 id="hero-title" class="load-title">
-            <span>Nerve</span>
-            <span>Media</span>
+            <span data-split>Nerve</span>
+            <span data-split>Media</span>
           </h1>
           <p class="hero-line">Marketing that hits the nerve.</p>
         </div>
 
         <div class="hero-actions" data-reveal data-pulse-item>
-          <a class="button button-primary magnetic" href="https://wa.me/96176087895" target="_blank" rel="noopener">
+          <a class="button button-primary" href="https://wa.me/96176087895" target="_blank" rel="noopener">
             <span>Send the brief</span>
             <strong>+961 76 087 895</strong>
           </a>
@@ -163,7 +170,7 @@
             </p>
           </div>
 
-          <a class="message-card magnetic" href="https://wa.me/96176087895" target="_blank" rel="noopener">
+          <a class="message-card" href="https://wa.me/96176087895" target="_blank" rel="noopener">
             <span class="message-label">Contact Us</span>
             <strong>+961 76 087 895</strong>
           </a>
@@ -176,6 +183,6 @@
       <span id="currentYear">2026</span>
     </footer>
 
-    <script src="app.js?v=5" defer></script>
+    <script src="app.js?v=12" defer></script>
   </body>
 </html>

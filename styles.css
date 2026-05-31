@@ -6,9 +6,13 @@
   --muted: rgba(255, 255, 255, 0.54);
   --line: rgba(255, 255, 255, 0.18);
   --dark-line: rgba(0, 0, 0, 0.14);
+  --accent: #ffffff;
   --pad: clamp(18px, 3vw, 44px);
   --max: 1240px;
   --scroll: 0;
+  --display: "Anton", "Arial Narrow", Impact, sans-serif;
+  --body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
   color-scheme: dark;
 }
 
@@ -26,9 +30,12 @@ body {
   overflow-x: hidden;
   background: var(--black);
   color: var(--white);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--body);
+  font-size: 16px;
   line-height: 1.45;
-  transition: background-color 900ms cubic-bezier(0.2, 0.8, 0.2, 1), color 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 260ms ease, color 260ms ease;
 }
 
 body.is-light {
@@ -44,33 +51,34 @@ body::after {
   z-index: -5;
   pointer-events: none;
   content: "";
-  transition: opacity 680ms ease, filter 680ms ease;
+  transition: opacity 220ms ease, filter 220ms ease;
 }
 
 body::before {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
-  background-size: clamp(54px, 7vw, 104px) clamp(54px, 7vw, 104px);
-  opacity: 0.48;
-  transform: translateY(calc(var(--scroll) * -44px));
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.036) 1px, transparent 1px);
+  background-size: clamp(62px, 8vw, 118px) clamp(62px, 8vw, 118px);
+  opacity: 0.18;
+  transform: translate3d(0, calc(var(--scroll) * -48px), 0);
 }
 
 body::after {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.12), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.08)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 35%, rgba(255, 255, 255, 0.04));
-  opacity: 0.65;
+    radial-gradient(circle at 100% 40%, rgba(255, 255, 255, 0.14), transparent 30%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.1), transparent 22%, transparent 76%, rgba(255, 255, 255, 0.08)),
+    linear-gradient(180deg, transparent 0 58%, rgba(0, 0, 0, 0.28));
+  opacity: 0.54;
 }
 
 body.is-light::before {
-  filter: invert(1);
-  opacity: 0.2;
+  filter: none;
+  opacity: 0.08;
 }
 
 body.is-light::after {
-  filter: invert(1);
-  opacity: 0.18;
+  filter: none;
+  opacity: 0.08;
 }
 
 a {
@@ -85,17 +93,17 @@ button {
 .nerve-canvas {
   position: fixed;
   inset: 0;
-  z-index: -4;
+  z-index: -2;
   width: 100%;
   height: 100%;
-  opacity: 0.82;
+  opacity: 0.96;
   pointer-events: none;
-  transition: filter 900ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: opacity 220ms ease;
 }
 
 body.is-light .nerve-canvas {
-  filter: invert(1);
-  opacity: 0.48;
+  filter: none;
+  opacity: 0.96;
 }
 
 .background-field {
@@ -105,16 +113,39 @@ body.is-light .nerve-canvas {
   overflow: hidden;
   pointer-events: none;
   background:
-    linear-gradient(115deg, rgba(255, 255, 255, 0.045), transparent 28%, transparent 72%, rgba(255, 255, 255, 0.035)),
-    radial-gradient(ellipse at 18% 34%, rgba(255, 255, 255, 0.055), transparent 34%),
-    radial-gradient(ellipse at 82% 68%, rgba(255, 255, 255, 0.045), transparent 38%);
-  opacity: 0.9;
-  transition: filter 900ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    radial-gradient(circle at 100% 40%, rgba(255, 255, 255, 0.16), transparent 33%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.4) 48%, rgba(0, 0, 0, 0.12));
+  opacity: 0.78;
+  transition: filter 220ms ease, opacity 220ms ease;
 }
 
 body.is-light .background-field {
-  filter: invert(1);
-  opacity: 0.26;
+  filter: none;
+  opacity: 0.04;
+}
+
+.grain {
+  position: fixed;
+  inset: -50%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  animation: grainShift 7s steps(6) infinite;
+}
+
+body.is-light .grain {
+  opacity: 0.035;
+}
+
+@keyframes grainShift {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-4%, 3%); }
+  40% { transform: translate(3%, -4%); }
+  60% { transform: translate(-3%, 2%); }
+  80% { transform: translate(4%, 3%); }
+  100% { transform: translate(0, 0); }
 }
 
 .scroll-progress {
@@ -124,7 +155,8 @@ body.is-light .background-field {
   z-index: 80;
   width: 100%;
   height: 2px;
-  background: currentColor;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.4), currentColor);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
   transform: scaleX(var(--scroll));
   transform-origin: left center;
 }
@@ -147,10 +179,10 @@ body.is-light .background-field {
 .brand,
 .whatsapp-button {
   border: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.68);
+  background: rgba(0, 0, 0, 0.78);
   color: var(--white);
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(12px);
 }
 
 body.is-light .brand,
@@ -158,7 +190,7 @@ body.is-light .whatsapp-button {
   border-color: rgba(0, 0, 0, 0.16);
   background: rgba(255, 255, 255, 0.74);
   color: var(--ink);
-  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.72);
+  text-shadow: none;
 }
 
 .brand {
@@ -166,14 +198,41 @@ body.is-light .whatsapp-button {
   align-items: center;
   min-height: 46px;
   padding: 0 15px;
+  font-family: var(--body);
   font-size: clamp(0.68rem, 2vw, 0.8rem);
-  font-weight: 950;
+  font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.16em;
+  transition: transform 220ms var(--ease), border-color 220ms ease, background 220ms ease;
+}
+
+.brand:hover,
+.brand:focus-visible {
+  transform: translateY(-2px);
+  border-color: currentColor;
 }
 
 .brand-mark {
+  position: relative;
   white-space: nowrap;
+}
+
+.brand-mark::after {
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  width: 100%;
+  height: 1px;
+  content: "";
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 360ms var(--ease);
+}
+
+.brand:hover .brand-mark::after,
+.brand:focus-visible .brand-mark::after {
+  transform: scaleX(1);
 }
 
 .whatsapp-button {
@@ -184,11 +243,12 @@ body.is-light .whatsapp-button {
   min-height: 46px;
   padding: 0 18px;
   overflow: hidden;
+  font-family: var(--body);
   font-size: 0.74rem;
-  font-weight: 950;
+  font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: transform 220ms ease, border-color 220ms ease, background 220ms ease;
+  letter-spacing: 0.12em;
+  transition: transform 220ms var(--ease), border-color 220ms ease, background 220ms ease;
 }
 
 .whatsapp-button::before {
@@ -216,8 +276,25 @@ body.is-light .whatsapp-button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #25d366;
-  box-shadow: 0 0 0 5px rgba(37, 211, 102, 0.14);
+  background: currentColor;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+  animation: dotPulse 2.4s var(--ease) infinite;
+}
+
+body.is-light .whatsapp-dot {
+  animation: dotPulseLight 2.4s var(--ease) infinite;
+}
+
+@keyframes dotPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.45); }
+  70% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+@keyframes dotPulseLight {
+  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.35); }
+  70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
 }
 
 .section-frame {
@@ -240,24 +317,37 @@ body.is-light .whatsapp-button {
 
 .eyebrow,
 .section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   margin: 0 0 18px;
   color: var(--muted);
+  font-family: var(--body);
   font-size: 0.74rem;
-  font-weight: 950;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.18em;
   text-shadow: 0 1px 5px rgba(0, 0, 0, 0.7);
+}
+
+.eyebrow::before,
+.section-label::before {
+  width: 22px;
+  height: 1px;
+  content: "";
+  background: currentColor;
+  opacity: 0.7;
 }
 
 body.is-light .eyebrow,
 body.is-light .section-label {
   color: rgba(0, 0, 0, 0.55);
-  text-shadow: 0 1px 5px rgba(255, 255, 255, 0.76);
+  text-shadow: none;
 }
 
 .section-label.dark {
   color: rgba(0, 0, 0, 0.56);
-  text-shadow: 0 1px 5px rgba(255, 255, 255, 0.72);
+  text-shadow: none;
 }
 
 h1,
@@ -279,7 +369,7 @@ body.is-light h3,
 .method h2,
 .method h3,
 .contact h2 {
-  text-shadow: 0 1px 7px rgba(255, 255, 255, 0.82);
+  text-shadow: none;
 }
 
 p,
@@ -293,12 +383,12 @@ body.is-light p,
 .method p,
 .contact p,
 .method-steps article {
-  text-shadow: 0 1px 5px rgba(255, 255, 255, 0.76);
+  text-shadow: none;
 }
 
 .button,
 .contact-panel {
-  text-shadow: 0 1px 5px rgba(255, 255, 255, 0.76);
+  text-shadow: none;
 }
 
 .message-card,
@@ -309,12 +399,12 @@ body.is-light p,
 .hero h1 {
   position: relative;
   margin: 0;
-  font-family: Impact, "Arial Black", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--display);
   font-size: clamp(5rem, 16vw, 14.6rem);
-  font-weight: 900;
-  line-height: 0.78;
+  font-weight: 400;
+  line-height: 0.82;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.005em;
 }
 
 .hero h1 span {
@@ -322,23 +412,38 @@ body.is-light p,
   transform-origin: left center;
 }
 
+.hero h1 .char {
+  display: inline-block;
+  transform: translateY(108%) rotate(6deg);
+  opacity: 0;
+  animation: charRise 0.9s var(--ease) forwards;
+}
+
+@keyframes charRise {
+  to {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
+  }
+}
+
 .hero h1 {
   transition: text-shadow 420ms ease, color 420ms ease;
 }
 
 .hero h1:hover {
-  text-shadow: 0 0 18px rgba(255, 255, 255, 0.2), 0 1px 7px rgba(0, 0, 0, 0.72);
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.22), 0 1px 7px rgba(0, 0, 0, 0.72);
 }
 
 .hero-line {
-  max-width: 740px;
+  max-width: 760px;
   margin: clamp(24px, 4vw, 44px) 0 0;
   color: var(--soft);
-  font-size: clamp(1.36rem, 4vw, 3.4rem);
-  font-weight: 900;
-  line-height: 1;
+  font-family: "Archivo Expanded", var(--body);
+  font-size: clamp(1.3rem, 3.6vw, 3.1rem);
+  font-weight: 800;
+  line-height: 1.02;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
 }
 
 .hero-actions {
@@ -366,9 +471,16 @@ body.is-light p,
   border: 1px solid currentColor;
   background: var(--white);
   color: var(--black);
-  font-weight: 950;
+  font-family: var(--body);
+  font-weight: 900;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  transition: transform 220ms ease, box-shadow 220ms ease;
+  transition: transform 240ms var(--ease), box-shadow 240ms var(--ease);
+}
+
+.button > span {
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
 }
 
 .button::after {
@@ -382,8 +494,15 @@ body.is-light p,
   border-radius: 50%;
   background: var(--black);
   color: var(--white);
-  content: ">";
+  content: "\2192";
+  font-weight: 400;
   transform: translateY(-50%);
+  transition: transform 280ms var(--ease);
+}
+
+.button:hover::after,
+.button:focus-visible::after {
+  transform: translateY(-50%) translateX(4px);
 }
 
 .button strong {
@@ -406,12 +525,12 @@ body.is-light p,
 .contact h2 {
   max-width: 900px;
   margin: 0;
-  font-family: Impact, "Arial Black", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--display);
   font-size: clamp(3rem, 8vw, 8rem);
-  font-weight: 900;
-  line-height: 0.9;
+  font-weight: 400;
+  line-height: 0.92;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.004em;
 }
 
 .manifesto p,
@@ -421,6 +540,7 @@ body.is-light p,
   margin: 26px 0 0;
   color: var(--soft);
   font-size: clamp(1.04rem, 1.8vw, 1.28rem);
+  line-height: 1.5;
 }
 
 .expertise,
@@ -449,8 +569,43 @@ body.is-light p,
   min-height: 300px;
   padding: clamp(20px, 3vw, 34px);
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.58);
-  backdrop-filter: blur(16px);
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(10px);
+  transition: background 360ms var(--ease), transform 360ms var(--ease);
+}
+
+.expertise-card::after,
+.mode-card::after {
+  position: absolute;
+  inset: auto auto 0 0;
+  width: 100%;
+  height: 2px;
+  content: "";
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 460ms var(--ease);
+}
+
+.expertise-card:hover,
+.mode-card:hover {
+  background: rgba(0, 0, 0, 0.82);
+  transform: translateY(-4px);
+}
+
+.expertise-card:hover::after,
+.mode-card:hover::after {
+  transform: scaleX(1);
+}
+
+.expertise-card:hover h3,
+.mode-card:hover h3 {
+  color: var(--white);
+}
+
+body.is-light .expertise-card:hover,
+body.is-light .mode-card:hover {
+  background: rgba(0, 0, 0, 0.78);
 }
 
 [data-pulse-item] {
@@ -478,18 +633,23 @@ body.is-light p,
 }
 
 .expertise-card span {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 950;
+  font-family: var(--display);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--accent);
 }
 
 .expertise-card h3,
 .mode-card h3,
 .method-steps h3 {
   margin: 82px 0 14px;
-  font-size: clamp(1.35rem, 3vw, 2.25rem);
-  line-height: 1;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(1.4rem, 3vw, 2.35rem);
+  line-height: 0.96;
   text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .expertise-card p,
@@ -503,6 +663,7 @@ body.is-light p,
   position: relative;
   margin: clamp(56px, 8vw, 110px) 0;
   padding: clamp(82px, 12vw, 150px) var(--pad);
+  background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
 }
 
@@ -539,8 +700,10 @@ body.is-light p,
 }
 
 .method-steps span {
-  font-weight: 950;
-  color: rgba(0, 0, 0, 0.45);
+  font-family: var(--display);
+  font-size: 1.6rem;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.4);
 }
 
 .method-steps h3 {
@@ -604,7 +767,7 @@ body.is-light p,
     linear-gradient(125deg, transparent 0 38%, rgba(255, 255, 255, 0.16) 46%, transparent 54%),
     linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
   background-size: 180% 100%, 100% 18px;
-  opacity: 0.42;
+  opacity: 0.34;
   transform: translateX(-34%);
   transition: transform 520ms ease, opacity 520ms ease;
 }
@@ -617,10 +780,16 @@ body.is-light p,
   place-items: center;
   width: 42px;
   height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--white);
   border-radius: 50%;
-  color: var(--white);
-  content: ">";
+  background: var(--white);
+  color: var(--black);
+  content: "\2192";
+  transition: transform 280ms var(--ease);
+}
+
+.message-card:hover::after {
+  transform: translateX(4px);
 }
 
 .message-card:hover,
@@ -638,23 +807,20 @@ body.is-light p,
 
 .message-label {
   position: relative;
-  /* Removed the 10ch restriction so it breathes better */
   max-width: 100%; 
-  font-family: Impact, "Arial Black", "Helvetica Neue", Arial, sans-serif;
-  /* Scaled down the minimum and maximum font sizes slightly */
-  font-size: clamp(2.2rem, 4.5vw, 4rem); 
-  line-height: 0.95;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(2.3rem, 4.6vw, 4.2rem); 
+  line-height: 0.92;
+  letter-spacing: 0.01em;
   text-transform: uppercase;
 }
 
 .message-card strong {
   position: relative;
-  /* Swapped the strict max-width for padding so it safely avoids the round arrow icon */
   padding-right: 50px; 
-  /* Scaled down the font size */
   font-size: clamp(1.1rem, 2.5vw, 2rem);
   line-height: 1.1;
-  /* Allowing the text to wrap instead of forcing it to stay on one overflowing line */
   white-space: normal; 
   word-break: break-word;
 }
@@ -666,10 +832,11 @@ body.is-light p,
   margin: 0 auto;
   padding: 0 0 28px;
   color: var(--muted);
+  font-family: var(--body);
   font-size: 0.72rem;
-  font-weight: 950;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
 }
 
 [data-reveal] {
@@ -688,10 +855,6 @@ body.is-light p,
   transform: none;
 }
 
-.magnetic {
-  will-change: transform;
-}
-
 @keyframes localPulse {
   0% {
     opacity: 0;
@@ -704,6 +867,12 @@ body.is-light p,
     opacity: 0;
     transform: translate(70%, -50%) rotate(-14deg) scaleX(1.4);
   }
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 @media (max-width: 960px) {
@@ -735,6 +904,23 @@ body.is-light p,
   .expertise-card h3,
   .mode-card h3 {
     margin-top: 48px;
+  }
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+  .brand,
+  .whatsapp-button,
+  .expertise-card,
+  .mode-card {
+    backdrop-filter: none;
+  }
+
+  .background-field {
+    opacity: 0.66;
+  }
+
+  body.is-light .background-field {
+    opacity: 0.03;
   }
 }
 
@@ -773,7 +959,26 @@ body.is-light p,
   }
 
   .nerve-canvas {
-    opacity: 0.52;
+    opacity: 0.84;
+  }
+
+  .expertise-card,
+  .mode-card,
+  .brand,
+  .whatsapp-button {
+    backdrop-filter: none;
+  }
+
+  body::before {
+    opacity: 0.12;
+  }
+
+  body::after {
+    opacity: 0.48;
+  }
+
+  body.is-light .nerve-canvas {
+    opacity: 0.96;
   }
 
   .hero h1 {
@@ -822,5 +1027,10 @@ body.is-light p,
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
+  }
+
+  .hero h1 .char {
+    transform: none;
+    opacity: 1;
   }
 }

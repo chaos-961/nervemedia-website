@@ -3,6 +3,9 @@
   const body = document.body;
   const year = document.getElementById("currentYear");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const compactViewport = window.matchMedia("(max-width: 700px)").matches;
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const lowPowerMotion = compactViewport || coarsePointer;
 
   if (year) {
     year.textContent = new Date().getFullYear();
@@ -11,24 +14,33 @@
   const revealItems = Array.from(document.querySelectorAll("[data-reveal]"));
   const pulseItems = Array.from(document.querySelectorAll("[data-pulse-item]"));
   const lightZones = Array.from(document.querySelectorAll(".light-zone"));
-  const magneticItems = Array.from(document.querySelectorAll(".magnetic"));
   let scrollTicking = false;
-  let activePulseIndex = 0;
+  let scrollProgress = 0;
+  let scrollVelocity = 0;
+  let lastScrollY = window.scrollY;
+  let requestNerveDraw = () => {};
+  let wakeNerveDraw = () => {};
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
   const updateScroll = () => {
     const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
     const progress = clamp(window.scrollY / maxScroll, 0, 1);
+    const scrollDelta = window.scrollY - lastScrollY;
+    lastScrollY = window.scrollY;
+    scrollProgress = progress;
+    scrollVelocity = scrollVelocity * 0.68 + scrollDelta * 0.32;
     root.style.setProperty("--scroll", progress.toFixed(4));
 
     const lightActive = lightZones.some((zone) => {
       const rect = zone.getBoundingClientRect();
-      const centerLine = window.innerHeight * 0.48;
-      return rect.top < centerLine && rect.bottom > centerLine;
+      const enterLine = window.innerHeight * 0.82;
+      const exitLine = window.innerHeight * 0.14;
+      return rect.top < enterLine && rect.bottom > exitLine;
     });
 
     body.classList.toggle("is-light", lightActive);
+    wakeNerveDraw(lowPowerMotion ? 160 : 260);
     scrollTicking = false;
   };
 
@@ -74,7 +86,7 @@
         };
       })
       .sort((a, b) => a.delay - b.delay)
-      .slice(0, 10);
+      .slice(0, lowPowerMotion ? 5 : 10);
 
     ordered.forEach(({ item, delay, left, top }) => {
       window.setTimeout(() => {
@@ -91,36 +103,30 @@
     item.addEventListener("focusin", () => chainPulse(item));
   });
 
-  if (!reducedMotion && pulseItems.length > 0) {
-    window.setInterval(() => {
-      const item = pulseItems[activePulseIndex % pulseItems.length];
-      activePulseIndex += 1;
-      if (!item) return;
-      const rect = item.getBoundingClientRect();
-      if (rect.bottom < 0 || rect.top > window.innerHeight) return;
-      chainPulse(item);
-    }, 3200);
+  // --- Hero title: split into characters with a staggered rise ---
+  if (!reducedMotion) {
+    const splitTargets = Array.from(document.querySelectorAll("[data-split]"));
+    let charIndex = 0;
+    splitTargets.forEach((target) => {
+      const text = target.textContent;
+      target.textContent = "";
+      text.split("").forEach((letter) => {
+        const span = document.createElement("span");
+        span.className = "char";
+        span.textContent = letter;
+        span.style.animationDelay = `${0.18 + charIndex * 0.045}s`;
+        target.appendChild(span);
+        charIndex += 1;
+      });
+    });
   }
 
-  magneticItems.forEach((item) => {
-    item.addEventListener("pointermove", (event) => {
-      const rect = item.getBoundingClientRect();
-      const x = (event.clientX - rect.left - rect.width / 2) * 0.16;
-      const y = (event.clientY - rect.top - rect.height / 2) * 0.16;
-      item.style.transform = `translate(${x}px, ${y}px)`;
-    });
-
-    item.addEventListener("pointerleave", () => {
-      item.style.transform = "";
-    });
-  });
-
   const canvas = document.getElementById("nerveCanvas");
-  if (!(canvas instanceof HTMLCanvasElement) || reducedMotion) {
+  if (!(canvas instanceof HTMLCanvasElement)) {
     return;
   }
 
-  const context = canvas.getContext("2d");
+  const context = canvas.getContext("2d", { alpha: true });
   if (!context) {
     return;
   }
@@ -128,167 +134,132 @@
   let width = 0;
   let height = 0;
   let pixelRatio = 1;
-  let strands = [];
-  let branches = [];
-  let pulses = [];
-  let rafId = 0;
-  const pointer = { x: -9999, y: -9999, active: false };
+  let resizeTimer = 0;
+  let animationFrame = 0;
+  let frameTimer = 0;
+  let lastMobileFrame = 0;
+  let lastFrameTime = 0;
+  let activeUntil = 0;
+  let paths = [];
+  let stars = [];
+  let source = { x: 0, y: 0 };
 
   const randomBetween = (min, max) => min + Math.random() * (max - min);
+  const choose = (items) => items[Math.floor(Math.random() * items.length)];
+  const isCompactCanvas = () => window.innerWidth <= 760 || coarsePointer;
 
-  const buildNetwork = () => {
-    strands = [];
-    branches = [];
-    pulses = [];
-    const count = Math.round(clamp(width / 110, 8, 16));
-
-    for (let index = 0; index < count; index += 1) {
-      const fromLeft = index % 2 === 0;
-      const start = {
-        x: fromLeft ? randomBetween(-width * 0.08, width * 0.2) : randomBetween(width * 0.8, width * 1.08),
-        y: randomBetween(height * 0.08, height * 0.92),
-      };
-      const end = {
-        x: fromLeft ? randomBetween(width * 0.52, width * 1.08) : randomBetween(-width * 0.08, width * 0.48),
-        y: randomBetween(height * 0.04, height * 0.96),
-      };
-      const bend = randomBetween(-0.34, 0.34);
-      const control = {
-        x: (start.x + end.x) / 2 + width * bend,
-        y: (start.y + end.y) / 2 + randomBetween(-height * 0.22, height * 0.22),
-      };
-
-      strands.push({
-        start,
-        end,
-        control,
-        seed: Math.random(),
-        width: randomBetween(0.55, 1.55),
-      });
+  const makeJaggedPath = (start, end, steps, jag, bias = 0) => {
+    const points = [];
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      const ease = 1 - Math.pow(1 - t, 1.28);
+      const taper = Math.sin(t * Math.PI);
+      const x = start.x + (end.x - start.x) * ease + randomBetween(-jag.x, jag.x) * taper;
+      const y = start.y + (end.y - start.y) * t + randomBetween(-jag.y, jag.y) * taper + bias * taper;
+      points.push({ x, y });
     }
+    points[0] = start;
+    points[points.length - 1] = end;
+    return points;
+  };
 
-    strands.forEach((strand, index) => {
-      const branchCount = 2 + Math.round(Math.random() * 3);
-      for (let branchIndex = 0; branchIndex < branchCount; branchIndex += 1) {
-        const anchorT = randomBetween(0.18, 0.82);
-        const anchor = pointOnCurve(strand, anchorT);
-        const direction = (index % 2 === 0 ? 1 : -1) * (branchIndex % 2 === 0 ? 1 : -1);
-        const length = randomBetween(width * 0.05, width * 0.16);
-        const angle = randomBetween(-0.9, 0.9) + direction * randomBetween(0.42, 1.05);
-        const end = {
-          x: anchor.x + Math.cos(angle) * length,
-          y: anchor.y + Math.sin(angle) * length * 0.72,
-        };
-        const control = {
-          x: (anchor.x + end.x) / 2 + Math.cos(angle + Math.PI / 2) * length * randomBetween(-0.18, 0.18),
-          y: (anchor.y + end.y) / 2 + Math.sin(angle + Math.PI / 2) * length * randomBetween(-0.18, 0.18),
-        };
-
-        branches.push({
-          start: anchor,
-          control,
-          end,
-          seed: Math.random(),
-          width: randomBetween(0.35, 0.9),
-        });
-      }
-
-      pulses.push({
-        strand,
-        seed: Math.random(),
-        speed: randomBetween(0.0001, 0.00022),
-        length: randomBetween(0.07, 0.15),
-      });
-
-      if (index % 3 === 0) {
-        const branch = branches[branches.length - 1];
-        if (branch) {
-          pulses.push({
-            strand: branch,
-            seed: Math.random(),
-            speed: randomBetween(0.00014, 0.00026),
-            length: randomBetween(0.08, 0.16),
-          });
-        }
-      }
+  const addStar = (point, depth, power, seed = Math.random()) => {
+    const rays = Math.round(randomBetween(6, 11));
+    stars.push({
+      x: point.x,
+      y: point.y,
+      depth,
+      power,
+      seed,
+      rays,
+      rayLengths: Array.from({ length: rays }, () => randomBetween(0.8, 2.05)),
+      radius: randomBetween(7, 18) * power,
     });
   };
 
-  const resize = () => {
-    pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = Math.floor(width * pixelRatio);
-    canvas.height = Math.floor(height * pixelRatio);
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    buildNetwork();
+  const addPath = (points, kind, depth, lineWidth, seed = Math.random()) => {
+    paths.push({ points, kind, depth, lineWidth, seed });
   };
 
-  const pointOnCurve = (strand, t) => {
-    const inv = 1 - t;
+  const getPalette = () => {
+    const light = body.classList.contains("is-light");
     return {
-      x: inv * inv * strand.start.x + 2 * inv * t * strand.control.x + t * t * strand.end.x,
-      y: inv * inv * strand.start.y + 2 * inv * t * strand.control.y + t * t * strand.end.y,
+      light,
+      rgb: light ? "0, 0, 0" : "255, 255, 255",
+      baseScale: light ? 2.2 : 1.4,
+      haloScale: light ? 0.7 : 1.6,
+      starScale: light ? 1.2 : 1.5,
+      sourceScale: light ? 0.14 : 0.36,
+      compositeOp: light ? "source-over" : "lighter",
     };
   };
 
-  const drawCurve = (curve, growth, time, opacity, lineWidth) => {
-    context.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
-    context.lineWidth = lineWidth;
-    context.beginPath();
-    context.moveTo(curve.start.x, curve.start.y);
+  const wakeCanvas = (duration = 420) => {
+    activeUntil = Math.max(activeUntil, performance.now() + duration);
+    requestNerveDraw();
+  };
+  wakeNerveDraw = wakeCanvas;
 
-    const steps = 36;
-    for (let step = 1; step <= steps; step += 1) {
-      const t = (step / steps) * growth;
-      const point = pointOnCurve(curve, t);
-      point.y += Math.sin(time * 0.0015 + step * 0.38 + curve.seed * 12) * 2.6;
-      context.lineTo(point.x, point.y);
-    }
+  const shiftedPoints = (path, time, compact) => {
+    const velocity = clamp(scrollVelocity, -150, 150);
+    const drift = scrollProgress * height * (0.1 + path.depth * 0.24);
+    const wave = reducedMotion ? 0 : Math.sin(time * 0.00042 + path.seed * 12) * width * 0.004 * path.depth;
+    const spark = reducedMotion ? 0 : Math.sin(time * 0.0024 + path.seed * 26) * 0.95 * path.depth;
+
+    const points = path.points.map((point, index) => {
+      const local = index / Math.max(1, path.points.length - 1);
+      const x = point.x + wave * (0.4 + local) + velocity * 0.014 * path.depth;
+      const y = point.y - drift + spark * Math.sin(local * Math.PI * 2 + path.seed) + velocity * 0.018 * path.depth;
+      return { x, y };
+    });
+
+    return points;
+  };
+
+  const pointAtPath = (points, t) => {
+    const target = clamp(t, 0, 1) * (points.length - 1);
+    const index = Math.min(points.length - 2, Math.floor(target));
+    const localT = target - index;
+    const start = points[index];
+    const end = points[index + 1];
+    return {
+      x: start.x + (end.x - start.x) * localT,
+      y: start.y + (end.y - start.y) * localT,
+    };
+  };
+
+  const drawPolyline = (points) => {
+    context.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) {
+        context.moveTo(point.x, point.y);
+      } else {
+        context.lineTo(point.x, point.y);
+      }
+    });
     context.stroke();
   };
 
-  const drawStrands = (time) => {
-    const load = clamp(time / 1300, 0, 1);
-    const scroll = Number.parseFloat(getComputedStyle(root).getPropertyValue("--scroll")) || 0;
+  const drawPulse = (points, t, length, alpha, lineWidth, palette) => {
+    const startT = clamp(t - length * 0.5, 0, 1);
+    const endT = clamp(t + length * 0.5, 0, 1);
+    if (endT <= startT) return;
 
-    strands.forEach((strand, index) => {
-      const growth = clamp(load * 1.2 - index * 0.018, 0, 1);
-      if (growth <= 0) return;
-
-      const mid = pointOnCurve(strand, 0.5);
-      const distance = Math.hypot(pointer.x - mid.x, pointer.y - mid.y);
-      const hover = pointer.active ? clamp(1 - distance / 260, 0, 1) : 0;
-      const shimmer = (Math.sin(time * 0.0018 + strand.seed * 8) + 1) * 0.5;
-      const opacity = 0.1 + shimmer * 0.08 + hover * 0.2 + scroll * 0.04;
-      drawCurve(strand, growth, time, opacity, strand.width + hover * 0.8);
-    });
-
-    branches.forEach((branch, index) => {
-      const growth = clamp(load * 1.28 - index * 0.006, 0, 1);
-      if (growth <= 0) return;
-      const shimmer = (Math.sin(time * 0.002 + branch.seed * 10) + 1) * 0.5;
-      drawCurve(branch, growth, time, 0.065 + shimmer * 0.055, branch.width);
-    });
-  };
-
-  const drawSignal = (curve, startT, length, alpha) => {
-    const steps = 12;
-    const gradientStart = pointOnCurve(curve, startT);
-    const gradientEnd = pointOnCurve(curve, clamp(startT + length, 0, 1));
-    const gradient = context.createLinearGradient(gradientStart.x, gradientStart.y, gradientEnd.x, gradientEnd.y);
-    gradient.addColorStop(0, `rgba(255, 255, 255, 0)`);
-    gradient.addColorStop(0.48, `rgba(255, 255, 255, ${alpha})`);
-    gradient.addColorStop(1, `rgba(255, 255, 255, 0)`);
+    const start = pointAtPath(points, startT);
+    const end = pointAtPath(points, endT);
+    const gradient = context.createLinearGradient(start.x, start.y, end.x, end.y);
+    gradient.addColorStop(0, `rgba(${palette.rgb}, 0)`);
+    gradient.addColorStop(0.45, `rgba(${palette.rgb}, ${alpha})`);
+    gradient.addColorStop(0.55, `rgba(${palette.rgb}, ${palette.light ? 0.72 : 1})`);
+    gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
 
     context.strokeStyle = gradient;
-    context.lineWidth = 2.2;
+    context.lineWidth = lineWidth;
     context.beginPath();
+
+    const steps = 8;
     for (let step = 0; step <= steps; step += 1) {
-      const t = clamp(startT + (length * step) / steps, 0, 1);
-      const point = pointOnCurve(curve, t);
+      const point = pointAtPath(points, startT + ((endT - startT) * step) / steps);
       if (step === 0) {
         context.moveTo(point.x, point.y);
       } else {
@@ -298,49 +269,273 @@
     context.stroke();
   };
 
-  const drawPulses = (time) => {
-    pulses.forEach((pulse, index) => {
-      const t = (time * pulse.speed + pulse.seed + index * 0.03) % 1;
-      const chain = (Math.sin(time * 0.003 - index * 0.62) + 1) * 0.5;
-      drawSignal(pulse.strand, t, pulse.length, 0.34 + chain * 0.42);
-    });
-  };
+  const drawStar = (star, time, compact, palette) => {
+    const velocity = clamp(scrollVelocity, -150, 150);
+    const flicker = reducedMotion ? 1 : 0.82 + Math.sin(time * 0.003 + star.seed * 20) * 0.18;
+    const x = star.x + Math.sin(time * 0.00042 + star.seed * 9) * width * 0.003 * star.depth + velocity * 0.014 * star.depth;
+    const y = star.y - scrollProgress * height * (0.1 + star.depth * 0.24) + velocity * 0.018 * star.depth;
+    const radius = star.radius * flicker;
 
-  const drawPointerAura = () => {
-    if (!pointer.active) return;
-    context.strokeStyle = "rgba(255, 255, 255, 0.16)";
-    context.lineWidth = 1;
+    if (y < -radius * 4 || y > height + radius * 4 || x < -radius * 4 || x > width + radius * 4) return;
+
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius * 2.2);
+    gradient.addColorStop(0, `rgba(${palette.rgb}, ${0.7 * star.power * palette.starScale})`);
+    gradient.addColorStop(0.18, `rgba(${palette.rgb}, ${0.28 * star.power * palette.starScale})`);
+    gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
+    context.fillStyle = gradient;
     context.beginPath();
-    context.moveTo(pointer.x - 42, pointer.y);
-    context.quadraticCurveTo(pointer.x - 10, pointer.y - 16, pointer.x + 42, pointer.y);
+    context.arc(x, y, radius * 2.2, 0, Math.PI * 2);
+    context.fill();
+
+    context.strokeStyle = `rgba(${palette.rgb}, ${(compact ? 0.36 : 0.56) * palette.starScale})`;
+    context.lineWidth = Math.max(0.7, star.power);
+    context.beginPath();
+    for (let ray = 0; ray < (compact ? Math.min(star.rays, 6) : star.rays); ray += 1) {
+      const angle = (Math.PI * 2 * ray) / star.rays + star.seed * Math.PI;
+      const rayLength = radius * star.rayLengths[ray] * (compact ? 0.72 : 1);
+      context.moveTo(x - Math.cos(angle) * radius * 0.18, y - Math.sin(angle) * radius * 0.18);
+      context.lineTo(x + Math.cos(angle) * rayLength, y + Math.sin(angle) * rayLength);
+    }
     context.stroke();
+
+    context.fillStyle = `rgba(${palette.rgb}, ${palette.light ? 0.72 : 0.96})`;
+    context.beginPath();
+    context.arc(x, y, Math.max(1.1, radius * 0.16), 0, Math.PI * 2);
+    context.fill();
   };
 
-  const draw = (time) => {
+  const drawSource = (time, compact, palette) => {
+    const pulse = reducedMotion ? 1 : 0.92 + Math.sin(time * 0.002) * 0.08;
+    const x = source.x + Math.sin(time * 0.0008) * width * 0.006;
+    const y = source.y + Math.cos(time * 0.0007) * height * 0.018 - scrollProgress * height * 0.08;
+    const radius = Math.max(width, height) * (compact ? 0.18 : 0.22) * pulse;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+
+    gradient.addColorStop(0, `rgba(${palette.rgb}, ${palette.sourceScale})`);
+    gradient.addColorStop(0.26, `rgba(${palette.rgb}, ${palette.sourceScale * 0.58})`);
+    gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  };
+
+  const buildNetwork = () => {
+    const compact = isCompactCanvas();
+    const primaryCount = compact ? 10 : 20;
+    const branchPerPrimary = compact ? 2 : 4;
+    const microPerPrimary = compact ? 1 : 2;
+    // Full height spread — nerves fan from top to bottom like the reference
+    const originY = height * 0.5;
+    const verticalSpan = height * (compact ? 2.8 : 3.6);
+
+    paths = [];
+    stars = [];
+    source = { x: width * 1.38, y: originY };
+
+    for (let index = 0; index < primaryCount; index += 1) {
+      const spread = (index / Math.max(1, primaryCount - 1) - 0.5) * verticalSpan;
+      const endpoint = {
+        x: compact ? randomBetween(-width * 0.1, width * 0.72) : randomBetween(-width * 0.22, width * 0.58),
+        y: originY + spread + randomBetween(-height * 0.08, height * 0.08),
+      };
+      const start = {
+        x: width * (compact ? randomBetween(1.08, 1.42) : randomBetween(1.12, 1.52)),
+        y: originY + spread * randomBetween(0.08, 0.28) + randomBetween(-height * 0.18, height * 0.18),
+      };
+      const primary = makeJaggedPath(
+        start,
+        endpoint,
+        Math.round(randomBetween(compact ? 6 : 9, compact ? 10 : 14)),
+        { x: width * (compact ? 0.028 : 0.038), y: height * (compact ? 0.022 : 0.032) },
+        randomBetween(-height * 0.06, height * 0.06)
+      );
+      // Thick bright primaries — closer to reference weight
+      const depth = randomBetween(0.82, 1);
+      addPath(primary, "primary", depth, randomBetween(compact ? 1.4 : 2.2, compact ? 2.8 : 4.8), Math.random());
+      addStar(choose(primary.slice(1, 3)), depth, randomBetween(compact ? 0.7 : 0.9, compact ? 1.1 : 1.6));
+      if (!compact) {
+        addStar(choose(primary.slice(3, -2)), depth * 0.85, randomBetween(0.5, 1.0));
+      }
+
+      for (let branch = 0; branch < branchPerPrimary; branch += 1) {
+        // More branching near the source (right side) — higher anchorIndex = closer to start
+        const anchorBias = Math.random() > 0.4 ? randomBetween(0.55, 0.92) : randomBetween(0.1, 0.55);
+        const anchorIndex = Math.floor(anchorBias * (primary.length - 2)) + 1;
+        const anchor = primary[Math.min(anchorIndex, primary.length - 2)];
+        const side = Math.random() > 0.5 ? 1 : -1;
+        const branchLength = randomBetween(width * 0.1, width * (compact ? 0.22 : 0.34)) * depth;
+        const branchEnd = {
+          x: anchor.x - branchLength * randomBetween(0.3, 0.9),
+          y: anchor.y + side * branchLength * randomBetween(0.2, 0.7),
+        };
+        const branchPath = makeJaggedPath(
+          anchor,
+          branchEnd,
+          Math.round(randomBetween(4, compact ? 6 : 9)),
+          { x: width * 0.022, y: height * 0.02 }
+        );
+        const branchDepth = depth * randomBetween(0.52, 0.82);
+        addPath(branchPath, "branch", branchDepth, randomBetween(0.55, compact ? 1.0 : 1.6), Math.random());
+
+        // Stars at every branch junction
+        addStar(anchor, branchDepth, randomBetween(0.45, compact ? 0.75 : 1.1));
+
+        // Two levels of twigs per branch
+        for (let twig = 0; twig < 2; twig += 1) {
+          if (compact && twig > 0) break;
+          const twigAnchor = choose(branchPath.slice(1, -1));
+          const twigLength = branchLength * randomBetween(0.18, 0.42);
+          const twigSide = Math.random() > 0.5 ? 1 : -1;
+          const twigPath = makeJaggedPath(
+            twigAnchor,
+            {
+              x: twigAnchor.x - twigLength * randomBetween(0.3, 0.85),
+              y: twigAnchor.y + twigSide * twigLength * randomBetween(0.15, 0.55),
+            },
+            Math.round(randomBetween(3, 6)),
+            { x: width * 0.014, y: height * 0.013 }
+          );
+          addPath(twigPath, "twig", branchDepth * 0.72, randomBetween(0.28, compact ? 0.55 : 0.82), Math.random());
+          if (Math.random() > 0.5) {
+            addStar(twigAnchor, branchDepth * 0.6, randomBetween(0.28, compact ? 0.5 : 0.7));
+          }
+        }
+      }
+
+      for (let micro = 0; micro < microPerPrimary; micro += 1) {
+        const anchor = choose(primary.slice(1, -1));
+        const length = randomBetween(width * 0.05, width * (compact ? 0.12 : 0.2));
+        addPath(
+          makeJaggedPath(
+            anchor,
+            {
+              x: anchor.x + randomBetween(-length, length * 0.3),
+              y: anchor.y + randomBetween(-length * 0.5, length * 0.5),
+            },
+            Math.round(randomBetween(3, 5)),
+            { x: width * 0.01, y: height * 0.01 }
+          ),
+          "micro",
+          depth * randomBetween(0.32, 0.58),
+          randomBetween(0.18, compact ? 0.4 : 0.58),
+          Math.random()
+        );
+      }
+    }
+
+    stars = stars
+      .sort((a, b) => b.power - a.power)
+      .slice(0, compact ? 22 : 55);
+  };
+
+  const draw = (time = performance.now()) => {
+    animationFrame = 0;
+    if (document.hidden) {
+      return;
+    }
+
+    const compact = isCompactCanvas();
+    const active = !reducedMotion;
+    // Steady ~24fps on desktop, ~15fps on mobile — smooth for ambient motion, far cheaper.
+    const frameGap = compact ? 66 : 42;
+
+    if (active && time - lastFrameTime < frameGap) {
+      requestNerveDraw(Math.max(16, frameGap - (time - lastFrameTime)));
+      return;
+    }
+
+    lastFrameTime = time;
+    lastMobileFrame = time;
+
+    const motion = reducedMotion ? 0 : clamp(Math.abs(scrollVelocity) / 110, 0, 1);
+    const palette = getPalette();
     context.clearRect(0, 0, width, height);
     context.lineCap = "round";
     context.lineJoin = "round";
-    //drawPointerAura();
-    drawStrands(time);
-    drawPulses(time);
-    rafId = window.requestAnimationFrame(draw);
+    context.globalCompositeOperation = palette.compositeOp;
+
+    drawSource(time, compact, palette);
+
+    paths.forEach((path, index) => {
+      const points = shiftedPoints(path, time, compact);
+      const baseAlpha = path.kind === "primary" ? 0.72 : path.kind === "branch" ? 0.42 : 0.22;
+      const haloAlpha = path.kind === "primary" ? 0.18 : path.kind === "branch" ? 0.07 : 0.035;
+      const flicker = active ? 0.88 + Math.sin(time * 0.0026 + path.seed * 30) * 0.12 : 1;
+
+      // Halo only on the heavier primary/branch strokes in dark mode (skips thousands of cheap-but-additive twig passes).
+      if (!palette.light && path.kind !== "twig" && path.kind !== "micro") {
+        context.strokeStyle = `rgba(${palette.rgb}, ${(haloAlpha * flicker + motion * 0.03) * palette.haloScale})`;
+        context.lineWidth = path.lineWidth * (compact ? 2.2 : 3.2);
+        drawPolyline(points);
+      }
+
+      context.strokeStyle = `rgba(${palette.rgb}, ${(baseAlpha * flicker + motion * 0.07) * palette.baseScale})`;
+      context.lineWidth = path.lineWidth;
+      drawPolyline(points);
+
+      if (active && index % (compact ? 10 : 6) === 0) {
+        const t = (time * (compact ? 0.00012 : 0.00018) * (1.2 + path.seed) + path.seed + scrollProgress * 0.6) % 1;
+        drawPulse(
+          points,
+          t,
+          compact ? 0.1 : 0.13,
+          compact ? 0.28 : 0.48,
+          path.lineWidth + (compact ? 0.55 : 1.05),
+          palette
+        );
+      }
+    });
+
+    stars.forEach((star) => drawStar(star, time, compact, palette));
+    context.globalCompositeOperation = "source-over";
+
+    scrollVelocity *= compact ? 0.62 : 0.72;
+    requestNerveDraw();
+  };
+
+  requestNerveDraw = (delay = 0) => {
+    if (animationFrame || frameTimer) return;
+
+    if (delay > 0) {
+      frameTimer = window.setTimeout(() => {
+        frameTimer = 0;
+        requestNerveDraw();
+      }, delay);
+      return;
+    }
+
+    animationFrame = window.requestAnimationFrame(draw);
+  };
+
+  const resize = () => {
+    const compact = isCompactCanvas();
+    pixelRatio = Math.min(window.devicePixelRatio || 1, compact ? 0.6 : 0.75);
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.floor(width * pixelRatio);
+    canvas.height = Math.floor(height * pixelRatio);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    buildNetwork();
+    if (animationFrame) {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+    }
+    if (frameTimer) {
+      window.clearTimeout(frameTimer);
+      frameTimer = 0;
+    }
+    requestNerveDraw();
+  };
+
+  const requestResize = () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(resize, 140);
   };
 
   resize();
-  window.addEventListener("resize", resize, { passive: true });
-  window.addEventListener(
-    "pointermove",
-    (event) => {
-      pointer.x = event.clientX;
-      pointer.y = event.clientY;
-      pointer.active = true;
-    },
-    { passive: true }
-  );
-  window.addEventListener("pointerleave", () => {
-    pointer.active = false;
-  });
-
-  rafId = window.requestAnimationFrame(draw);
-  window.addEventListener("pagehide", () => window.cancelAnimationFrame(rafId));
+  window.addEventListener("resize", requestResize, { passive: true });
+  window.addEventListener("pageshow", () => wakeCanvas(260));
 })();
