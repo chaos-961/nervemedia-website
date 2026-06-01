@@ -6,22 +6,58 @@
   const compactViewport = window.matchMedia("(max-width: 700px)").matches;
   const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
   const lowPowerMotion = compactViewport || coarsePointer;
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
 
   if (year) {
     year.textContent = new Date().getFullYear();
   }
 
   const revealItems = Array.from(document.querySelectorAll("[data-reveal]"));
-  const pulseItems = Array.from(document.querySelectorAll("[data-pulse-item]"));
-  const lightZones = Array.from(document.querySelectorAll(".light-zone"));
+  const methodSection = document.getElementById("method");
   let scrollTicking = false;
   let scrollProgress = 0;
   let scrollVelocity = 0;
+  let themeIsLight = false;
   let lastScrollY = window.scrollY;
   let requestNerveDraw = () => {};
   let wakeNerveDraw = () => {};
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const smoothStep = (value) => value * value * (3 - value * 2);
+
+  const setThemeFromScroll = () => {
+    const methodTop = methodSection ? methodSection.offsetTop : document.documentElement.scrollHeight * 0.36;
+    const methodHeight = methodSection ? methodSection.offsetHeight : window.innerHeight;
+    const fadeDistance = clamp(window.innerHeight * 0.62, 260, 560);
+    const methodStart = methodTop - window.innerHeight * 0.72;
+    const methodEnd = methodTop + methodHeight - window.innerHeight * 0.38;
+    const enteringMethod = smoothStep(clamp((window.scrollY - methodStart) / fadeDistance, 0, 1));
+    const leavingMethod = smoothStep(clamp((methodEnd - window.scrollY) / fadeDistance, 0, 1));
+    const scrollLight = enteringMethod * leavingMethod;
+    const channel = Math.round(scrollLight * 255);
+    const textIsDark = channel >= 118;
+    const foreground = textIsDark ? "0, 0, 0" : "255, 255, 255";
+    const inverse = textIsDark ? "255, 255, 255" : "0, 0, 0";
+    const bg = `${channel}, ${channel}, ${channel}`;
+
+    themeIsLight = textIsDark;
+    root.style.setProperty("--theme-luma", scrollLight.toFixed(4));
+    root.style.setProperty("--theme-bg-rgb", bg);
+    root.style.setProperty("--theme-fg-rgb", foreground);
+    root.style.setProperty("--theme-inverse-rgb", inverse);
+    root.style.setProperty("--theme-grid-opacity", (0.09 + (1 - scrollLight) * 0.1).toFixed(3));
+    root.style.setProperty("--theme-ambient-opacity", (0.12 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.26).toFixed(3));
+    root.style.setProperty("--theme-field-opacity", (0.12 + (1 - scrollLight) * 0.54).toFixed(3));
+    root.style.setProperty("--theme-canvas-opacity", (textIsDark ? 0.46 : 0.54).toFixed(3));
+    root.style.setProperty("--theme-grain-opacity", (0.028 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.02).toFixed(3));
+    root.dataset.themeTone = textIsDark ? "light" : "dark";
+    body.classList.toggle("is-light", textIsDark);
+
+    if (themeMeta) {
+      const hex = channel.toString(16).padStart(2, "0");
+      themeMeta.setAttribute("content", `#${hex}${hex}${hex}`);
+    }
+  };
 
   const updateScroll = () => {
     const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
@@ -31,15 +67,7 @@
     scrollProgress = progress;
     scrollVelocity = scrollVelocity * 0.68 + scrollDelta * 0.32;
     root.style.setProperty("--scroll", progress.toFixed(4));
-
-    const lightActive = lightZones.some((zone) => {
-      const rect = zone.getBoundingClientRect();
-      const enterLine = window.innerHeight * 0.82;
-      const exitLine = window.innerHeight * 0.14;
-      return rect.top < enterLine && rect.bottom > exitLine;
-    });
-
-    body.classList.toggle("is-light", lightActive);
+    setThemeFromScroll();
     wakeNerveDraw(lowPowerMotion ? 160 : 260);
     scrollTicking = false;
   };
@@ -67,38 +95,7 @@
   window.addEventListener("scroll", requestScrollUpdate, { passive: true });
   window.addEventListener("resize", requestScrollUpdate, { passive: true });
 
-  const chainPulse = (source) => {
-    if (reducedMotion || pulseItems.length === 0) return;
-
-    const rect = source.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const ordered = pulseItems
-      .map((item) => {
-        const itemRect = item.getBoundingClientRect();
-        const itemX = itemRect.left + itemRect.width / 2;
-        const itemY = itemRect.top + itemRect.height / 2;
-        return {
-          item,
-          delay: Math.hypot(itemX - x, itemY - y) * 0.18,
-          left: `${clamp(x - itemRect.left, 0, itemRect.width)}px`,
-          top: `${clamp(y - itemRect.top, 0, itemRect.height)}px`,
-        };
-      })
-      .sort((a, b) => a.delay - b.delay)
-      .slice(0, lowPowerMotion ? 5 : 10);
-
-    ordered.forEach(({ item, delay, left, top }) => {
-      window.setTimeout(() => {
-        item.style.setProperty("--pulse-inset", `${top} auto auto ${left}`);
-        item.classList.remove("pulse-now");
-        void item.offsetWidth;
-        item.classList.add("pulse-now");
-      }, delay);
-    });
-  };
-
-  // Hover "pulse-chain" removed — it competed with the canvas and read as distracting.
+  // Hover pulse-chain was removed because it competed with the canvas.
   // Reveal-on-scroll and the ambient nerve canvas carry the motion now.
 
   // --- Hero title: split into characters with a staggered rise ---
@@ -133,7 +130,6 @@
   let animationFrame = 0;
   let frameTimer = 0;
   let lastFrameTime = 0;
-  let activeUntil = 0;
   let paths = [];
   let stars = [];
   let source = { x: 0, y: 0 };
@@ -234,7 +230,7 @@
   let canvasReady = true;
 
   const getPalette = () => {
-    const light = body.classList.contains("is-light");
+    const light = themeIsLight;
     return {
       light,
       rgb: light ? "0, 0, 0" : "255, 255, 255",
@@ -247,7 +243,7 @@
   };
 
   const wakeCanvas = (duration = 420) => {
-    activeUntil = Math.max(activeUntil, performance.now() + duration);
+    void duration;
     requestNerveDraw();
   };
   wakeNerveDraw = wakeCanvas;

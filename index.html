@@ -19,23 +19,41 @@
       href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Expanded:wght@600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=17" />
+    <link rel="stylesheet" href="styles.css?v=36" />
   </head>
   <body>
     <canvas class="nerve-canvas" id="nerveCanvas" aria-hidden="true"></canvas>
     <div class="background-field" aria-hidden="true"></div>
     <div class="grain" aria-hidden="true"></div>
-    <div class="scroll-progress" aria-hidden="true"></div>
 
     <header class="site-header" data-pulse-item>
       <a class="brand" href="#top" aria-label="Nerve Media home">
         <span class="brand-mark">NERVE MEDIA</span>
       </a>
 
-      <a class="whatsapp-button" href="https://wa.me/96176087895" target="_blank" rel="noopener">
-        <span class="whatsapp-dot" aria-hidden="true"></span>
-        <span>WhatsApp</span>
-      </a>
+      <div class="header-actions">
+        <a class="whatsapp-button" href="https://wa.me/96176087895" target="_blank" rel="noopener">
+          <span class="whatsapp-dot" aria-hidden="true"></span>
+          <span>WhatsApp</span>
+        </a>
+
+        <a class="instagram-link" href="https://www.instagram.com/nerve.media/" target="_blank" rel="noopener" aria-label="Nerve Media on Instagram">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <defs>
+              <linearGradient id="instagram-stroke" x1="4" y1="20" x2="20" y2="4" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#feda75"></stop>
+                <stop offset="0.32" stop-color="#fa7e1e"></stop>
+                <stop offset="0.58" stop-color="#d62976"></stop>
+                <stop offset="0.78" stop-color="#962fbf"></stop>
+                <stop offset="1" stop-color="#4f5bd5"></stop>
+              </linearGradient>
+            </defs>
+            <rect class="instagram-frame" x="3.2" y="3.2" width="17.6" height="17.6" rx="5.4" stroke="url(#instagram-stroke)"></rect>
+            <circle class="instagram-lens" cx="12" cy="12" r="4.05" stroke="url(#instagram-stroke)"></circle>
+            <circle class="instagram-dot" cx="17.2" cy="6.8" r="1.25"></circle>
+          </svg>
+        </a>
+      </div>
     </header>
 
     <main id="top">
@@ -72,87 +90,46 @@
         </p>
       </section>
 
-      <section class="expertise section-frame" id="expertise" aria-labelledby="expertise-title">
-        <div class="section-head" data-reveal data-pulse-item>
-          <div class="section-label">Expertise</div>
-          <h2 id="expertise-title">A sharper system for the brand in front of us.</h2>
-        </div>
-
-        <div class="expertise-grid">
-          <article class="expertise-card" data-reveal data-pulse-item>
-            <span>01</span>
-            <h3>Positioning</h3>
-            <p>Find the strongest angle, the audience tension, and the message people can repeat.</p>
-          </article>
-          <article class="expertise-card" data-reveal data-pulse-item>
-            <span>02</span>
-            <h3>Campaigns</h3>
-            <p>Launch plans, offer framing, visual direction, copy, and paid-media structure.</p>
-          </article>
-          <article class="expertise-card" data-reveal data-pulse-item>
-            <span>03</span>
-            <h3>Content engine</h3>
-            <p>Concepts, scripts, short-form formats, calendars, shoots, edits, and repeatable series.</p>
-          </article>
-        </div>
-      </section>
-
       <section class="method light-zone" id="method" aria-labelledby="method-title">
-        <div class="method-inner">
-          <div class="method-copy" data-reveal data-pulse-item>
-            <div class="section-label dark">Method</div>
-            <h2 id="method-title">From stuck to sharp in three moves.</h2>
-            <p>
-              We compress the thinking, expose the cleanest direction, and turn
-              it into a campaign system that your team can actually run.
-            </p>
+        <div class="method-pin" data-method-pin>
+          <div class="method-stage">
+            <div class="method-head" data-reveal data-pulse-item>
+              <div class="section-label dark">Method</div>
+              <h2 id="method-title">Tune the signal.</h2>
+              <p>One charged idea, wired through message, look, and media until the whole thing fires as a system your team can run.</p>
+              <div class="method-meter" aria-hidden="true">
+                <span class="method-meter-fill" data-meter-fill></span>
+              </div>
+            </div>
+
+            <ol class="method-track" data-method-track>
+              <li class="method-move is-active" data-move="0">
+                <span class="method-num" aria-hidden="true">01</span>
+                <div class="method-move-body">
+                  <h3>Diagnose</h3>
+                  <p>Find the exact spot where attention slips, trust thins, or the message goes blurry.</p>
+                </div>
+              </li>
+              <li class="method-move" data-move="1">
+                <span class="method-num" aria-hidden="true">02</span>
+                <div class="method-move-body">
+                  <h3>Sharpen</h3>
+                  <p>Forge one idea and bend the words, visuals, and channels around it until it cuts.</p>
+                </div>
+              </li>
+              <li class="method-move" data-move="2">
+                <span class="method-num" aria-hidden="true">03</span>
+                <div class="method-move-body">
+                  <h3>Move</h3>
+                  <p>Ship the assets, set the launch rhythm, and leave a clear next test on the table.</p>
+                </div>
+              </li>
+            </ol>
+
+            <div class="method-dots" data-method-dots aria-hidden="true">
+              <span class="is-active"></span><span></span><span></span>
+            </div>
           </div>
-
-          <div class="method-steps">
-            <article data-reveal data-pulse-item>
-              <span>01</span>
-              <div>
-                <h3>Diagnose</h3>
-                <p>Clarify what is weak, missing, confusing, or invisible.</p>
-              </div>
-            </article>
-            <article data-reveal data-pulse-item>
-              <span>02</span>
-              <div>
-                <h3>Sharpen</h3>
-                <p>Shape the idea, message, visual direction, and channel logic.</p>
-              </div>
-            </article>
-            <article data-reveal data-pulse-item>
-              <span>03</span>
-              <div>
-                <h3>Move</h3>
-                <p>Build the campaign assets, launch rhythm, content formats, and next test.</p>
-              </div>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="proof section-frame" aria-labelledby="proof-title">
-        <div class="section-head" data-reveal data-pulse-item>
-          <div class="section-label">Campaign modes</div>
-          <h2 id="proof-title">Pick the pressure point.</h2>
-        </div>
-
-        <div class="mode-grid">
-          <article class="mode-card" data-reveal data-pulse-item>
-            <h3>Brand reset</h3>
-            <p>For teams that need clearer positioning, stronger identity cues, and a better first impression.</p>
-          </article>
-          <article class="mode-card" data-reveal data-pulse-item>
-            <h3>Launch push</h3>
-            <p>For new offers, products, locations, drops, and campaigns that need speed with taste.</p>
-          </article>
-          <article class="mode-card" data-reveal data-pulse-item>
-            <h3>Growth loop</h3>
-            <p>For brands ready to test content, run ads, and turn attention into measurable demand.</p>
-          </article>
         </div>
       </section>
 
@@ -171,7 +148,13 @@
           </div>
 
           <a class="message-card" href="https://wa.me/96176087895" target="_blank" rel="noopener">
-            <span class="message-label">Contact Us</span>
+            <span class="message-arrow" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M5 12h12"></path>
+                <path d="m13 7 5 5-5 5"></path>
+              </svg>
+            </span>
+            <span class="message-label">Send the brief</span>
             <strong>+961 76 087 895</strong>
           </a>
         </div>
@@ -179,10 +162,12 @@
     </main>
 
     <footer class="site-footer">
-      <span>Nerve Media</span>
-      <span id="currentYear">2026</span>
+      <span class="footer-brand">Nerve Media <small>v1.0.0</small></span>
+      <span class="footer-meta">
+        <span id="currentYear">2026</span>
+      </span>
     </footer>
 
-    <script src="app.js?v=17" defer></script>
+    <script src="app.js?v=36" defer></script>
   </body>
 </html>
