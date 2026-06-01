@@ -98,10 +98,8 @@
     });
   };
 
-  pulseItems.forEach((item) => {
-    item.addEventListener("pointerenter", () => chainPulse(item));
-    item.addEventListener("focusin", () => chainPulse(item));
-  });
+  // Hover "pulse-chain" removed — it competed with the canvas and read as distracting.
+  // Reveal-on-scroll and the ambient nerve canvas carry the motion now.
 
   // --- Hero title: split into characters with a staggered rise ---
   if (!reducedMotion) {
@@ -119,6 +117,13 @@
         charIndex += 1;
       });
     });
+    const heroTitle = document.querySelector(".hero h1");
+    if (heroTitle) {
+      heroTitle.setAttribute("data-animate", "");
+      // Safety net: if the rise never completes (e.g. tab restored from bfcache),
+      // guarantee the title ends visible.
+      window.setTimeout(() => heroTitle.removeAttribute("data-animate"), 2400);
+    }
   }
 
   let width = 0;
@@ -233,11 +238,11 @@
     return {
       light,
       rgb: light ? "0, 0, 0" : "255, 255, 255",
-      baseScale: light ? 2.2 : 1.4,
-      haloScale: light ? 0.7 : 1.6,
-      starScale: light ? 1.2 : 1.5,
-      sourceScale: light ? 0.14 : 0.36,
-      compositeOp: light ? "source-over" : "lighter",
+      baseScale: light ? 1.5 : 0.92,
+      haloScale: light ? 0.45 : 0.55,
+      starScale: light ? 0.7 : 0.78,
+      sourceScale: light ? 0.07 : 0.12,
+      compositeOp: light ? "source-over" : "source-over",
     };
   };
 
@@ -352,10 +357,10 @@
   };
 
   const drawSource = (time, compact, palette) => {
-    const pulse = reducedMotion ? 1 : 0.92 + Math.sin(time * 0.002) * 0.08;
+    const pulse = reducedMotion ? 1 : 0.94 + Math.sin(time * 0.002) * 0.06;
     const x = source.x + Math.sin(time * 0.0008) * width * 0.006;
     const y = source.y + Math.cos(time * 0.0007) * height * 0.018 - scrollProgress * height * 0.08;
-    const radius = Math.max(width, height) * (compact ? 0.18 : 0.22) * pulse;
+    const radius = Math.max(width, height) * (compact ? 0.09 : 0.13) * pulse;
     const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
 
     gradient.addColorStop(0, `rgba(${palette.rgb}, ${palette.sourceScale})`);
@@ -369,9 +374,9 @@
 
   const buildNetwork = () => {
     const compact = isCompactCanvas();
-    const primaryCount = compact ? 30 : 22;
-    const branchPerPrimary = compact ? 5 : 4;
-    const microPerPrimary = compact ? 2 : 2;
+    const primaryCount = compact ? 16 : 20;
+    const branchPerPrimary = compact ? 3 : 4;
+    const microPerPrimary = compact ? 1 : 2;
     // Full height spread — nerves fan from top to bottom like the reference
     const seed = Math.round(width * 17 + height * 3 + (compact ? 1009 : 2003));
     randomValue = makeRandom(seed);
@@ -403,9 +408,9 @@
         { x: width * (compact ? 0.028 : 0.038), y: height * (compact ? 0.022 : 0.032) },
         randomBetween(-height * 0.06, height * 0.06)
       );
-      // Thick bright primaries — closer to reference weight
+      // Thinner, finer primaries so the network recedes behind content
       const depth = randomBetween(0.82, 1);
-      addPath(primary, "primary", depth, randomBetween(compact ? 2.05 : 2.2, compact ? 4.15 : 4.8), randomValue());
+      addPath(primary, "primary", depth, randomBetween(compact ? 1.2 : 1.3, compact ? 2.1 : 2.5), randomValue());
       addStar(choose(primary.slice(1, 3)), depth, randomBetween(compact ? 0.82 : 0.9, compact ? 1.35 : 1.6));
       if (!compact || index % 2 === 0) {
         addStar(choose(primary.slice(3, -2)), depth * 0.85, randomBetween(compact ? 0.42 : 0.5, compact ? 0.86 : 1.0));
@@ -478,7 +483,7 @@
 
     stars = stars
       .sort((a, b) => b.power - a.power)
-      .slice(0, compact ? 92 : 58);
+      .slice(0, compact ? 34 : 42);
     networkSignature = `${networkMode}:${paths.length}:${stars.length}:${Math.round(source.x)}:${Math.round(source.y)}:${paths
       .slice(0, 8)
       .map((path) => `${path.kind}:${Math.round(path.points[0].x)},${Math.round(path.points[0].y)}`)
@@ -522,7 +527,7 @@
       // Halo only on the heavier primary/branch strokes in dark mode (skips thousands of cheap-but-additive twig passes).
       if (!palette.light && path.kind !== "twig" && path.kind !== "micro") {
         context.strokeStyle = `rgba(${palette.rgb}, ${(haloAlpha * flicker + motion * 0.03) * palette.haloScale})`;
-        context.lineWidth = path.lineWidth * (compact ? 2.2 : 3.2);
+        context.lineWidth = path.lineWidth * (compact ? 1.6 : 2);
         drawPolyline(points);
       }
 
