@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; img-src 'self' data:; font-src https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'; connect-src 'none'"
+    />
+    <meta name="theme-color" content="#000000" />
+    <title>Nerve Media Admin</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M8 45V19h8l12 15V19h8v26h-8L16 30v15z' fill='%23fff'/%3E%3Cpath d='M42 45V19h5l5 13 5-13h5v26h-6V31l-4 10h-1l-4-10v14z' fill='%23fff'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Expanded:wght@600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css?v=37" />
+    <link rel="stylesheet" href="admin.css?v=24" />
+  </head>
+  <body class="admin-body">
+    <canvas class="nerve-canvas" id="nerveCanvas" aria-hidden="true"></canvas>
+    <div class="background-field" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header admin-header" data-pulse-item>
+      <a class="brand" href="../" aria-label="Nerve Media home">
+        <span class="brand-mark">NERVE MEDIA</span>
+      </a>
+      <button class="admin-badge admin-logout" id="adminLogout" type="button" hidden>Log out</button>
+    </header>
+
+    <main class="admin-shell" id="top">
+      <section class="admin-login section-frame" id="loginView" aria-labelledby="admin-title">
+        <div class="admin-login-copy" data-reveal data-pulse-item>
+          <p class="eyebrow">Admin access</p>
+          <h1 id="admin-title">Admin</h1>
+        </div>
+
+        <form class="admin-form" id="adminLoginForm" autocomplete="off" data-reveal data-pulse-item>
+          <label class="admin-field">
+            <span>Name</span>
+            <input id="adminName" name="name" type="text" inputmode="text" autocomplete="username" required />
+          </label>
+
+          <label class="admin-field">
+            <span>Password</span>
+            <input id="adminPassword" name="password" type="password" autocomplete="current-password" required />
+          </label>
+
+          <button class="button button-primary admin-submit" id="adminSubmit" type="submit">
+            <span>Log in</span>
+          </button>
+
+          <p class="admin-status" id="adminStatus" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="admin-content" id="adminContent" hidden aria-live="polite"></section>
+    </main>
+
+    <script src="payload.js?v=8" defer></script>
+    <script src="admin.js?v=12" defer></script>
+    <script src="../app.js?v=40" defer></script>
+  </body>
+</html>

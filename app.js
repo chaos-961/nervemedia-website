@@ -26,6 +26,37 @@
   const smoothStep = (value) => value * value * (3 - value * 2);
 
   const setThemeFromScroll = () => {
+    const adminTone = body.classList.contains("admin-body")
+      ? body.classList.contains("is-pricing-open")
+        ? "light"
+        : "dark"
+      : "";
+
+    if (adminTone) {
+      const textIsDark = adminTone === "light";
+      const foreground = textIsDark ? "0, 0, 0" : "255, 255, 255";
+      const inverse = textIsDark ? "255, 255, 255" : "0, 0, 0";
+      const bg = textIsDark ? "245, 245, 240" : "0, 0, 0";
+
+      themeIsLight = textIsDark;
+      root.style.setProperty("--theme-luma", textIsDark ? "0.96" : "0");
+      root.style.setProperty("--theme-bg-rgb", bg);
+      root.style.setProperty("--theme-fg-rgb", foreground);
+      root.style.setProperty("--theme-inverse-rgb", inverse);
+      root.style.setProperty("--theme-grid-opacity", textIsDark ? "0.1" : "0.18");
+      root.style.setProperty("--theme-ambient-opacity", textIsDark ? "0.28" : "0.18");
+      root.style.setProperty("--theme-field-opacity", textIsDark ? "0.24" : "0.66");
+      root.style.setProperty("--theme-canvas-opacity", textIsDark ? "0.78" : "0.86");
+      root.style.setProperty("--theme-grain-opacity", textIsDark ? "0.03" : "0.045");
+      root.dataset.themeTone = adminTone;
+      body.classList.toggle("is-light", textIsDark);
+
+      if (themeMeta) {
+        themeMeta.setAttribute("content", textIsDark ? "#f5f5f0" : "#000000");
+      }
+      return;
+    }
+
     const methodTop = methodSection ? methodSection.offsetTop : document.documentElement.scrollHeight * 0.36;
     const methodHeight = methodSection ? methodSection.offsetHeight : window.innerHeight;
     const fadeDistance = clamp(window.innerHeight * 0.62, 260, 560);
@@ -230,14 +261,15 @@
   let canvasReady = true;
 
   const getPalette = () => {
-    const light = themeIsLight;
+    const adminCanvas = body.classList.contains("admin-body");
+    const light = adminCanvas ? body.classList.contains("is-pricing-open") : themeIsLight;
     return {
       light,
       rgb: light ? "0, 0, 0" : "255, 255, 255",
-      baseScale: light ? 1.5 : 0.92,
-      haloScale: light ? 0.45 : 0.55,
-      starScale: light ? 0.7 : 0.78,
-      sourceScale: light ? 0.07 : 0.12,
+      baseScale: adminCanvas ? (light ? 2.2 : 1.55) : light ? 1.5 : 0.92,
+      haloScale: adminCanvas ? (light ? 0.7 : 0.95) : light ? 0.45 : 0.55,
+      starScale: adminCanvas ? (light ? 0.95 : 1.05) : light ? 0.7 : 0.78,
+      sourceScale: adminCanvas ? (light ? 0.09 : 0.16) : light ? 0.07 : 0.12,
       compositeOp: light ? "source-over" : "source-over",
     };
   };
