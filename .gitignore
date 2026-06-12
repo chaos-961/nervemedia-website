@@ -1,24 +1,45 @@
+# Operating-system metadata
 .DS_Store
 Thumbs.db
-desktop.ini
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
+# Local editors and coding agents
+.claude/
+.Codex/
+.idea/
+.vscode/
+*.code-workspace
+*.suo
+*.user
+
+# Dependencies and generated output
 node_modules/
 dist/
 build/
+coverage/
 _site/
 
-# Local editor / agent config (not needed for the website)
-.claude/
-
-# Python image-pipeline caches (scripts/gen-images.py)
+# Python caches and local environments
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
 
+# Local secrets and environment overrides
 .env
 .env.*
 !.env.example
 
+# Logs and temporary files
 *.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
