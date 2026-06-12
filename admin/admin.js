@@ -1,3 +1,15 @@
+/*
+ * SECURITY NOTE — this is client-side privacy, NOT authentication.
+ *
+ * The login below derives a PBKDF2 key from the password and uses it to
+ * AES-GCM *decrypt* an embedded blob (payload.js). The password never leaves
+ * the browser, but the encrypted payload ships to every visitor: anyone can
+ * read it, and a determined attacker can brute-force a weak password offline.
+ * Treat this only as obfuscation of low-sensitivity content.
+ *
+ * Do NOT store sensitive pricing, client, or personal data in the payload
+ * unless/until this is backed by real server-side authentication.
+ */
 (function () {
   const form = document.getElementById("adminLoginForm");
   const nameInput = document.getElementById("adminName");

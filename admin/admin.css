@@ -7,11 +7,14 @@
   --theme-fg-rgb: 255, 255, 255 !important;
   --theme-inverse-rgb: 0, 0, 0 !important;
   --theme-luma: 0 !important;
-  --theme-grid-opacity: 0.18 !important;
-  --theme-ambient-opacity: 0.18 !important;
-  --theme-field-opacity: 0.66 !important;
-  --theme-canvas-opacity: 0.86 !important;
-  --theme-grain-opacity: 0.045 !important;
+  /* Calmer admin shell: the network sits well back behind the login form
+     (it is atmosphere, not interference). These !important vars are what the
+     canvas actually reads — they override the values app.js sets inline. */
+  --theme-grid-opacity: 0.08 !important;
+  --theme-ambient-opacity: 0.16 !important;
+  --theme-field-opacity: 0.22 !important;
+  --theme-canvas-opacity: 0.3 !important;
+  --theme-grain-opacity: 0.03 !important;
 }
 
 .admin-body.is-pricing-open {
@@ -22,11 +25,11 @@
   --theme-fg-rgb: 0, 0, 0 !important;
   --theme-inverse-rgb: 255, 255, 255 !important;
   --theme-luma: 0.96 !important;
-  --theme-grid-opacity: 0.1 !important;
-  --theme-ambient-opacity: 0.28 !important;
-  --theme-field-opacity: 0.24 !important;
-  --theme-canvas-opacity: 0.78 !important;
-  --theme-grain-opacity: 0.03 !important;
+  --theme-grid-opacity: 0.08 !important;
+  --theme-ambient-opacity: 0.16 !important;
+  --theme-field-opacity: 0.2 !important;
+  --theme-canvas-opacity: 0.24 !important;
+  --theme-grain-opacity: 0.025 !important;
   color-scheme: light;
 }
 
@@ -43,7 +46,8 @@
   z-index: 2;
 }
 
-.admin-body .nerve-canvas {
+.admin-body .nerve-canvas,
+.admin-body .nerve-field {
   z-index: 0;
   opacity: var(--theme-canvas-opacity) !important;
 }

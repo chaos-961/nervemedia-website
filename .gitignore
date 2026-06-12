@@ -1,9 +1,18 @@
 .DS_Store
 Thumbs.db
+desktop.ini
 
 node_modules/
 dist/
 build/
+_site/
+
+# Local editor / agent config (not needed for the website)
+.claude/
+
+# Python image-pipeline caches (scripts/gen-images.py)
+__pycache__/
+*.pyc
 
 .env
 .env.*

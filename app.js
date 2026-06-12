@@ -1,29 +1,116 @@
+/* =====================================================================
+   Nerve Media — app.js
+   Two independent systems, in order:
+
+   1. CORE  — environment profile, scroll-driven theme inversion,
+              reveal observers, hero intro, and the nerve background
+              (seeded network → pre-baked compositor layers + pulses).
+              Runs on BOTH the public page and the admin shell.
+   2. FX    — the scroll-motion coordinator (springs, pins, scrubs on
+              desktop; IntersectionObserver reveals on touch/compact).
+              Skipped entirely for admin-body and reduced motion.
+
+   Performance invariants (do not regress):
+   - Per-frame work happens only during active scroll; both loops idle.
+   - No layout reads inside a frame tick — geometry is cached by
+     measureThemeGeom()/measureGeom() and re-read only on load/fonts/resize.
+   - Mobile never runs a background rAF loop: the network is baked into
+     offscreen layers and slid by the compositor via a --scroll transform.
+   - On compact viewports --scroll is written to the .nerve-field element,
+     not :root, so a scroll frame invalidates one subtree, not the page.
+   ===================================================================== */
+
 (function () {
+  /* ----------------------------------------------------------------
+     1.1 Environment & device profile
+     ---------------------------------------------------------------- */
   const root = document.documentElement;
   const body = document.body;
   const year = document.getElementById("currentYear");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const compactViewport = window.matchMedia("(max-width: 700px)").matches;
+  const compactViewport = window.matchMedia("(max-width: 760px)").matches;
   const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-  const lowPowerMotion = compactViewport || coarsePointer;
+  const saveData = !!(navigator.connection && navigator.connection.saveData);
+  // Low-spec: thin the network density even on wide screens.
+  const lowSpec =
+    saveData ||
+    (typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4) ||
+    (typeof navigator.hardwareConcurrency === "number" && navigator.hardwareConcurrency <= 4);
+  const lowPowerMotion = compactViewport || coarsePointer || saveData;
   const themeMeta = document.querySelector('meta[name="theme-color"]');
 
   if (year) {
     year.textContent = new Date().getFullYear();
   }
 
-  const revealItems = Array.from(document.querySelectorAll("[data-reveal]"));
   const methodSection = document.getElementById("method");
   let scrollTicking = false;
   let scrollProgress = 0;
   let scrollVelocity = 0;
   let themeIsLight = false;
+  let themeMetaChannel = -1;
   let lastScrollY = window.scrollY;
   let requestNerveDraw = () => {};
   let wakeNerveDraw = () => {};
+  let fieldContainer = null; // assigned in the background section
+  const themeVarCache = {};
+  // Theme geometry is measured once (and on load/fonts/resize) instead of
+  // reading offsetTop/scrollHeight on every scroll frame — those reads forced
+  // a synchronous reflow right after the previous frame's style writes.
+  let methodTop = 0;
+  let methodHeight = 0;
+  let viewH = window.innerHeight;
+  let docMaxScroll = 1;
+  let themeGeomTimer = 0;
+  let mobileThemeLit = false;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const smoothStep = (value) => value * value * (3 - value * 2);
+  const isCompactCanvas = () => window.innerWidth <= 760 || coarsePointer;
+
+  const setThemeVar = (name, value) => {
+    if (themeVarCache[name] === value) return;
+    themeVarCache[name] = value;
+    root.style.setProperty(name, value);
+  };
+
+  // --scroll feeds the grid parallax (desktop, on :root) and the nerve-field
+  // layer parallax (compact, on the field element). Writing it on :root on a
+  // phone invalidated computed style for the whole document every scroll
+  // frame — scoping the write to its one mobile consumer removes that.
+  let scrollVarEl = null;
+  let scrollVarValue = "";
+  const setScrollVar = (value) => {
+    const target = fieldContainer && isCompactCanvas() ? fieldContainer : root;
+    if (scrollVarEl === target && scrollVarValue === value) return;
+    scrollVarEl = target;
+    scrollVarValue = value;
+    target.style.setProperty("--scroll", value);
+  };
+
+  /* ----------------------------------------------------------------
+     1.2 Theme controller — scroll-driven inversion around #method.
+     Admin keeps its own fixed tones (login dark / pricing light).
+     ---------------------------------------------------------------- */
+  const measureThemeGeom = () => {
+    viewH = window.innerHeight;
+    docMaxScroll = Math.max(1, document.documentElement.scrollHeight - viewH);
+    if (methodSection) {
+      const rect = methodSection.getBoundingClientRect();
+      methodTop = rect.top + window.scrollY;
+      methodHeight = rect.height;
+    } else {
+      methodTop = document.documentElement.scrollHeight * 0.36;
+      methodHeight = viewH;
+    }
+  };
+
+  const updateThemeMeta = (channel) => {
+    if (!themeMeta || (Math.abs(channel - themeMetaChannel) < 8 && channel !== 0 && channel !== 255)) return;
+    themeMetaChannel = channel;
+    const hex = channel.toString(16).padStart(2, "0");
+    themeMeta.setAttribute("content", `#${hex}${hex}${hex}`);
+  };
 
   const setThemeFromScroll = () => {
     const adminTone = body.classList.contains("admin-body")
@@ -39,67 +126,82 @@
       const bg = textIsDark ? "245, 245, 240" : "0, 0, 0";
 
       themeIsLight = textIsDark;
-      root.style.setProperty("--theme-luma", textIsDark ? "0.96" : "0");
-      root.style.setProperty("--theme-bg-rgb", bg);
-      root.style.setProperty("--theme-fg-rgb", foreground);
-      root.style.setProperty("--theme-inverse-rgb", inverse);
-      root.style.setProperty("--theme-grid-opacity", textIsDark ? "0.1" : "0.18");
-      root.style.setProperty("--theme-ambient-opacity", textIsDark ? "0.28" : "0.18");
-      root.style.setProperty("--theme-field-opacity", textIsDark ? "0.24" : "0.66");
-      root.style.setProperty("--theme-canvas-opacity", textIsDark ? "0.78" : "0.86");
-      root.style.setProperty("--theme-grain-opacity", textIsDark ? "0.03" : "0.045");
+      window.__themeLuma = textIsDark ? 0.96 : 0;
+      setThemeVar("--theme-luma", textIsDark ? "0.96" : "0");
+      setThemeVar("--theme-bg-rgb", bg);
+      setThemeVar("--theme-fg-rgb", foreground);
+      setThemeVar("--theme-inverse-rgb", inverse);
+      // Admin keeps a calm, readable shell: the network is dimmed well back
+      // behind the login form (and the light pricing view) so it reads as
+      // atmosphere, not interference.
+      setThemeVar("--theme-grid-opacity", textIsDark ? "0.08" : "0.12");
+      setThemeVar("--theme-ambient-opacity", textIsDark ? "0.18" : "0.14");
+      setThemeVar("--theme-field-opacity", textIsDark ? "0.2" : "0.5");
+      setThemeVar("--theme-canvas-opacity", textIsDark ? "0.24" : "0.3");
+      setThemeVar("--theme-grain-opacity", textIsDark ? "0.025" : "0.035");
       root.dataset.themeTone = adminTone;
       body.classList.toggle("is-light", textIsDark);
-
-      if (themeMeta) {
-        themeMeta.setAttribute("content", textIsDark ? "#f5f5f0" : "#000000");
-      }
+      updateThemeMeta(textIsDark ? 245 : 0);
       return;
     }
 
-    const methodTop = methodSection ? methodSection.offsetTop : document.documentElement.scrollHeight * 0.36;
-    const methodHeight = methodSection ? methodSection.offsetHeight : window.innerHeight;
-    const fadeDistance = clamp(window.innerHeight * 0.62, 260, 560);
-    const methodStart = methodTop - window.innerHeight * 0.72;
-    const methodEnd = methodTop + methodHeight - window.innerHeight * 0.38;
+    const fadeDistance = clamp(viewH * 0.62, 260, 560);
+    const methodStart = methodTop - viewH * 0.72;
+    const methodEnd = methodTop + methodHeight - viewH * 0.38;
     const enteringMethod = smoothStep(clamp((window.scrollY - methodStart) / fadeDistance, 0, 1));
     const leavingMethod = smoothStep(clamp((methodEnd - window.scrollY) / fadeDistance, 0, 1));
-    const scrollLight = enteringMethod * leavingMethod;
-    const channel = Math.round(scrollLight * 255);
+    let scrollLight = enteringMethod * leavingMethod;
+
+    // Touch devices flip the palette as a single decisive inversion (with
+    // hysteresis so it can't flap at the threshold) instead of scrubbing the
+    // crossover. Continuous scrubbing re-animates the registered theme
+    // channels — which every element consumes — on every scroll frame, and
+    // that full-page style recalc was the single biggest mobile jank source.
+    if (lowPowerMotion) {
+      if (scrollLight > 0.58) mobileThemeLit = true;
+      else if (scrollLight < 0.42) mobileThemeLit = false;
+      scrollLight = mobileThemeLit ? 1 : 0;
+    } else {
+      scrollLight = Math.round(scrollLight * 100) / 100;
+    }
+
+    const channel = Math.min(255, Math.round(scrollLight * 127.5) * 2);
     const textIsDark = channel >= 118;
-    const foreground = textIsDark ? "0, 0, 0" : "255, 255, 255";
-    const inverse = textIsDark ? "255, 255, 255" : "0, 0, 0";
-    const bg = `${channel}, ${channel}, ${channel}`;
+    const foreground = textIsDark ? "0" : "255";
+    const inverse = textIsDark ? "255" : "0";
+    const paletteCrossover = smoothStep(clamp(1 - Math.abs(channel - 118) / 46, 0, 1));
+    const canvasOpacity = (textIsDark ? 0.46 : 0.54) * (1 - paletteCrossover * 0.58);
 
     themeIsLight = textIsDark;
-    root.style.setProperty("--theme-luma", scrollLight.toFixed(4));
-    root.style.setProperty("--theme-bg-rgb", bg);
-    root.style.setProperty("--theme-fg-rgb", foreground);
-    root.style.setProperty("--theme-inverse-rgb", inverse);
-    root.style.setProperty("--theme-grid-opacity", (0.09 + (1 - scrollLight) * 0.1).toFixed(3));
-    root.style.setProperty("--theme-ambient-opacity", (0.12 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.26).toFixed(3));
-    root.style.setProperty("--theme-field-opacity", (0.12 + (1 - scrollLight) * 0.54).toFixed(3));
-    root.style.setProperty("--theme-canvas-opacity", (textIsDark ? 0.46 : 0.54).toFixed(3));
-    root.style.setProperty("--theme-grain-opacity", (0.028 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.02).toFixed(3));
+    window.__themeLuma = scrollLight;
+    setThemeVar("--theme-luma", scrollLight.toFixed(2));
+    setThemeVar("--theme-bg-channel", String(channel));
+    setThemeVar("--theme-fg-channel", foreground);
+    setThemeVar("--theme-inverse-channel", inverse);
+    setThemeVar("--theme-grid-opacity", (0.09 + (1 - scrollLight) * 0.1).toFixed(3));
+    setThemeVar("--theme-ambient-opacity", (0.12 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.26).toFixed(3));
+    setThemeVar("--theme-field-opacity", (0.12 + (1 - scrollLight) * 0.54).toFixed(3));
+    setThemeVar("--theme-canvas-opacity", canvasOpacity.toFixed(3));
+    setThemeVar("--theme-grain-opacity", (0.028 + (1 - Math.abs(scrollLight - 0.5) * 2) * 0.02).toFixed(3));
     root.dataset.themeTone = textIsDark ? "light" : "dark";
     body.classList.toggle("is-light", textIsDark);
-
-    if (themeMeta) {
-      const hex = channel.toString(16).padStart(2, "0");
-      themeMeta.setAttribute("content", `#${hex}${hex}${hex}`);
-    }
+    updateThemeMeta(channel);
   };
 
+  /* ----------------------------------------------------------------
+     1.3 Scroll spine — one passive listener feeding theme + canvas.
+     ---------------------------------------------------------------- */
   const updateScroll = () => {
-    const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
-    const progress = clamp(window.scrollY / maxScroll, 0, 1);
+    const progress = clamp(window.scrollY / docMaxScroll, 0, 1);
     const scrollDelta = window.scrollY - lastScrollY;
     lastScrollY = window.scrollY;
     scrollProgress = progress;
     scrollVelocity = scrollVelocity * 0.68 + scrollDelta * 0.32;
-    root.style.setProperty("--scroll", progress.toFixed(4));
+    // Quantized (~0.2px of grid travel per step) and cached, so the write —
+    // and the style invalidation it causes — only happens when it matters.
+    setScrollVar((Math.round(progress * 250) / 250).toFixed(3));
     setThemeFromScroll();
-    wakeNerveDraw(lowPowerMotion ? 160 : 260);
+    wakeNerveDraw(lowPowerMotion ? 450 : 260);
     scrollTicking = false;
   };
 
@@ -109,51 +211,141 @@
     window.requestAnimationFrame(updateScroll);
   };
 
+  /* ----------------------------------------------------------------
+     1.4 Reveals — fire as soon as a sliver enters the viewport (a tall
+     block at 18% visibility used to reveal long after the reader
+     reached it), and stagger items that arrive in the same batch.
+     ---------------------------------------------------------------- */
+  const revealItems = Array.from(document.querySelectorAll("[data-reveal]"));
   const revealObserver = new IntersectionObserver(
     (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("is-visible");
-          revealObserver.unobserve(entry.target);
-        }
+      const incoming = entries.filter((entry) => entry.isIntersecting);
+      incoming.forEach((entry, order) => {
+        entry.target.style.setProperty("--reveal-delay", `${Math.min(order * 70, 280)}ms`);
+        entry.target.classList.add("is-visible");
+        revealObserver.unobserve(entry.target);
       });
     },
-    { threshold: 0.18, rootMargin: "0px 0px -8% 0px" }
+    { threshold: 0.04, rootMargin: "0px 0px -4% 0px" }
   );
 
   revealItems.forEach((item) => revealObserver.observe(item));
+
+  const heroSection = document.querySelector(".hero");
+  if (heroSection) {
+    const heroObserver = new IntersectionObserver(
+      ([entry]) => body.classList.toggle("is-hero-visible", entry.isIntersecting),
+      { rootMargin: "80px 0px" }
+    );
+    heroObserver.observe(heroSection);
+  }
+
+  const remeasureTheme = () => {
+    measureThemeGeom();
+    requestScrollUpdate();
+  };
+
+  measureThemeGeom();
   updateScroll();
   window.addEventListener("scroll", requestScrollUpdate, { passive: true });
-  window.addEventListener("resize", requestScrollUpdate, { passive: true });
+  window.addEventListener(
+    "resize",
+    () => {
+      window.clearTimeout(themeGeomTimer);
+      themeGeomTimer = window.setTimeout(remeasureTheme, 150);
+      requestScrollUpdate();
+    },
+    { passive: true }
+  );
+  window.addEventListener("load", remeasureTheme);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(remeasureTheme);
+  }
 
-  // Hover pulse-chain was removed because it competed with the canvas.
-  // Reveal-on-scroll and the ambient nerve canvas carry the motion now.
-
-  // --- Hero title: split into characters with a staggered rise ---
+  /* ----------------------------------------------------------------
+     1.5 Hero intro — split title.
+     Desktop: per-character rise. Touch/compact: the two words rise as
+     units (word-level keeps the DOM light and the phone GPU calm).
+     Screen readers always get the clean .sr-only heading instead.
+     ---------------------------------------------------------------- */
+  const heroTitle = document.querySelector(".hero h1");
   if (!reducedMotion) {
     const splitTargets = Array.from(document.querySelectorAll("[data-split]"));
-    let charIndex = 0;
-    splitTargets.forEach((target) => {
-      const text = target.textContent;
-      target.textContent = "";
-      text.split("").forEach((letter) => {
-        const span = document.createElement("span");
-        span.className = "char";
-        span.textContent = letter;
-        span.style.animationDelay = `${0.18 + charIndex * 0.045}s`;
-        target.appendChild(span);
-        charIndex += 1;
+    if (lowPowerMotion) {
+      splitTargets.forEach((target, index) => {
+        target.style.animationDelay = `${0.16 + index * 0.14}s`;
       });
-    });
-    const heroTitle = document.querySelector(".hero h1");
-    if (heroTitle) {
-      heroTitle.setAttribute("data-animate", "");
-      // Safety net: if the rise never completes (e.g. tab restored from bfcache),
-      // guarantee the title ends visible.
-      window.setTimeout(() => heroTitle.removeAttribute("data-animate"), 2400);
+      if (heroTitle) heroTitle.setAttribute("data-animate", "words");
+    } else {
+      let charIndex = 0;
+      splitTargets.forEach((target) => {
+        const text = target.textContent;
+        target.textContent = "";
+        text.split("").forEach((letter) => {
+          const span = document.createElement("span");
+          span.className = "char";
+          span.textContent = letter;
+          span.style.animationDelay = `${0.18 + charIndex * 0.045}s`;
+          target.appendChild(span);
+          charIndex += 1;
+        });
+      });
+      if (heroTitle) heroTitle.setAttribute("data-animate", "chars");
     }
   }
 
+  /* ----------------------------------------------------------------
+     1.5b Boot — loading screen.
+     The #loader overlay (public page only) covers first paint and is
+     dismissed when the hero image + fonts are ready: never sooner than
+     500ms (so it doesn't blink on a warm cache) and never later than
+     2.8s (so it can't hold the page hostage on a slow network).
+     body.is-ready gates the hero entrance choreography in CSS, so the
+     title/copy/CTA rise exactly as the loader wipes away. The title's
+     entrance attribute is cleared on a timer from ready (not from
+     eval) as a bfcache/visibility safety net.
+     ---------------------------------------------------------------- */
+  const loader = document.getElementById("loader");
+  let bootDone = false;
+  const markReady = () => {
+    if (bootDone) return;
+    bootDone = true;
+    body.classList.add("is-ready");
+    if (loader) {
+      loader.classList.add("is-done");
+      window.setTimeout(() => loader.remove(), 1000);
+    }
+    if (heroTitle) {
+      window.setTimeout(() => heroTitle.removeAttribute("data-animate"), 2600);
+    }
+  };
+
+  if (!loader || reducedMotion) {
+    markReady();
+  } else {
+    const heroImage = document.querySelector(".hero-visual img");
+    const imageReady =
+      heroImage && !heroImage.complete
+        ? new Promise((resolve) => {
+            heroImage.addEventListener("load", resolve, { once: true });
+            heroImage.addEventListener("error", resolve, { once: true });
+          })
+        : Promise.resolve();
+    const fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    const minHold = new Promise((resolve) => window.setTimeout(resolve, 500));
+    const failSafe = new Promise((resolve) => window.setTimeout(resolve, 2800));
+    Promise.race([Promise.all([imageReady, fontsReady, minHold]), failSafe]).then(markReady);
+  }
+
+  /* ----------------------------------------------------------------
+     1.6 Nerve background.
+     The network is pre-baked into a few depth-bucketed offscreen layers
+     (plus a source-glow sprite). Those layers are presented as
+     compositor-promoted DOM elements and slid with `transform` each
+     frame — no per-frame canvas repaint at all. Only the live pulses
+     are rasterized (on the small overlay canvas). Mobile has no draw
+     loop whatsoever: a CSS transform multiplies --scroll instead.
+     ---------------------------------------------------------------- */
   let width = 0;
   let height = 0;
   let pixelRatio = 1;
@@ -161,6 +353,10 @@
   let animationFrame = 0;
   let frameTimer = 0;
   let lastFrameTime = 0;
+  let activeUntil = performance.now() + 1400;
+  let drawCount = 0;
+  let lastFrameGap = 0;
+  let canvasIdleFrames = 0;
   let paths = [];
   let stars = [];
   let source = { x: 0, y: 0 };
@@ -170,6 +366,14 @@
   let networkBuilds = 0;
   let networkSignature = "";
   let randomValue = Math.random;
+  let canvasThemeMix = 0;
+  let backgroundStarted = false;
+  const LAYER_DEPTHS = [0.3, 0.6, 0.88]; // far → near, paint order
+  let layerStore = [];
+  let layerChannel = -1;
+  let layerBaseHeight = 0;
+  let pulsePaths = [];
+  let sourceSprite = null;
 
   const canvas = document.getElementById("nerveCanvas");
   window.__nerveDebug = {
@@ -187,8 +391,14 @@
       networkHeight,
       networkMode,
       scrollProgress,
+      reducedMotion,
+      lowPower: lowPowerMotion,
+      lowSpec,
+      ready: bootDone,
+      renderer: "none",
       canvasReady: false,
     }),
+    finishBoot: markReady,
   };
 
   if (!canvas || canvas.tagName !== "CANVAS" || typeof canvas.getContext !== "function") {
@@ -199,6 +409,17 @@
   if (!context) {
     return;
   }
+
+  // The baked depth layers + source glow live inside this fixed field as
+  // their own compositor-promoted elements; parallax/drift is applied as a
+  // `transform` (GPU-composited, no repaint). #nerveCanvas above it is a
+  // small overlay used ONLY for the live pulses.
+  fieldContainer = document.createElement("div");
+  fieldContainer.className = "nerve-field";
+  fieldContainer.setAttribute("aria-hidden", "true");
+  canvas.parentNode.insertBefore(fieldContainer, canvas);
+  let layerEls = [];
+  let sourceAttached = false;
 
   const makeRandom = (seed) => {
     let value = seed >>> 0;
@@ -212,7 +433,6 @@
   };
   const randomBetween = (min, max) => min + randomValue() * (max - min);
   const choose = (items) => items[Math.floor(randomValue() * items.length)];
-  const isCompactCanvas = () => window.innerWidth <= 760 || coarsePointer;
 
   const makeJaggedPath = (start, end, steps, jag, bias = 0) => {
     const points = [];
@@ -244,8 +464,17 @@
   };
 
   const addPath = (points, kind, depth, lineWidth, seed = randomValue()) => {
-    paths.push({ points, kind, depth, lineWidth, seed });
+    paths.push({
+      points,
+      shifted: points.map(() => ({ x: 0, y: 0 })),
+      kind,
+      depth,
+      lineWidth,
+      seed,
+    });
   };
+
+  let canvasReady = true;
 
   const writeProofState = () => {
     root.dataset.nervePixelRatio = pixelRatio.toFixed(2);
@@ -258,43 +487,40 @@
     root.dataset.nerveCanvasReady = String(canvasReady);
   };
 
-  let canvasReady = true;
-
   const getPalette = () => {
     const adminCanvas = body.classList.contains("admin-body");
-    const light = adminCanvas ? body.classList.contains("is-pricing-open") : themeIsLight;
+    const lightTarget = adminCanvas ? body.classList.contains("is-pricing-open") : themeIsLight;
+    if (isCompactCanvas()) {
+      // Discrete on compact: the page theme snaps there too, and a stable
+      // channel means the pre-rendered layers only redraw once per flip.
+      canvasThemeMix = lightTarget ? 1 : 0;
+    } else {
+      canvasThemeMix += ((lightTarget ? 1 : 0) - canvasThemeMix) * 0.16;
+    }
+    const channel = Math.round(255 * (1 - canvasThemeMix));
     return {
-      light,
-      rgb: light ? "0, 0, 0" : "255, 255, 255",
-      baseScale: adminCanvas ? (light ? 2.2 : 1.55) : light ? 1.5 : 0.92,
-      haloScale: adminCanvas ? (light ? 0.7 : 0.95) : light ? 0.45 : 0.55,
-      starScale: adminCanvas ? (light ? 0.95 : 1.05) : light ? 0.7 : 0.78,
-      sourceScale: adminCanvas ? (light ? 0.09 : 0.16) : light ? 0.07 : 0.12,
-      compositeOp: light ? "source-over" : "source-over",
+      rgb: `${channel}, ${channel}, ${channel}`,
+      baseScale: adminCanvas ? 1.55 + canvasThemeMix * 0.65 : 0.92 + canvasThemeMix * 0.58,
+      haloScale: (adminCanvas ? 0.95 - canvasThemeMix * 0.25 : 0.55 - canvasThemeMix * 0.1) * (1 - canvasThemeMix),
+      starScale: adminCanvas ? 1.05 - canvasThemeMix * 0.1 : 0.78 - canvasThemeMix * 0.08,
+      sourceScale: adminCanvas ? 0.16 - canvasThemeMix * 0.07 : 0.12 - canvasThemeMix * 0.05,
+      pulseScale: 1 - canvasThemeMix * 0.28,
+      coreScale: 0.96 - canvasThemeMix * 0.24,
+      compositeOp: "source-over",
     };
   };
 
   const wakeCanvas = (duration = 420) => {
-    void duration;
+    // Mobile/touch: no animation loop — just make sure the layers are baked;
+    // the CSS `--scroll` transform carries the parallax on the compositor.
+    if (isCompactCanvas()) {
+      ensureLayers();
+      return;
+    }
+    activeUntil = Math.max(activeUntil, performance.now() + duration);
     requestNerveDraw();
   };
   wakeNerveDraw = wakeCanvas;
-
-  const shiftedPoints = (path, time, compact) => {
-    const velocity = clamp(scrollVelocity, -150, 150);
-    const drift = scrollProgress * height * (0.1 + path.depth * 0.24);
-    const wave = reducedMotion ? 0 : Math.sin(time * 0.00042 + path.seed * 12) * width * 0.004 * path.depth;
-    const spark = reducedMotion ? 0 : Math.sin(time * 0.0024 + path.seed * 26) * 0.95 * path.depth;
-
-    const points = path.points.map((point, index) => {
-      const local = index / Math.max(1, path.points.length - 1);
-      const x = point.x + wave * (0.4 + local) + velocity * 0.014 * path.depth;
-      const y = point.y - drift + spark * Math.sin(local * Math.PI * 2 + path.seed) + velocity * 0.018 * path.depth;
-      return { x, y };
-    });
-
-    return points;
-  };
 
   const pointAtPath = (points, t) => {
     const target = clamp(t, 0, 1) * (points.length - 1);
@@ -308,16 +534,16 @@
     };
   };
 
-  const drawPolyline = (points) => {
-    context.beginPath();
+  const drawPolyline = (points, ctx = context) => {
+    ctx.beginPath();
     points.forEach((point, index) => {
       if (index === 0) {
-        context.moveTo(point.x, point.y);
+        ctx.moveTo(point.x, point.y);
       } else {
-        context.lineTo(point.x, point.y);
+        ctx.lineTo(point.x, point.y);
       }
     });
-    context.stroke();
+    ctx.stroke();
   };
 
   const drawPulse = (points, t, length, alpha, lineWidth, palette) => {
@@ -330,7 +556,7 @@
     const gradient = context.createLinearGradient(start.x, start.y, end.x, end.y);
     gradient.addColorStop(0, `rgba(${palette.rgb}, 0)`);
     gradient.addColorStop(0.45, `rgba(${palette.rgb}, ${alpha})`);
-    gradient.addColorStop(0.55, `rgba(${palette.rgb}, ${palette.light ? 0.72 : 1})`);
+    gradient.addColorStop(0.55, `rgba(${palette.rgb}, ${palette.pulseScale})`);
     gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
 
     context.strokeStyle = gradient;
@@ -349,61 +575,165 @@
     context.stroke();
   };
 
-  const drawStar = (star, time, compact, palette) => {
-    const velocity = clamp(scrollVelocity, -150, 150);
-    const flicker = reducedMotion ? 1 : 0.82 + Math.sin(time * 0.003 + star.seed * 20) * 0.18;
-    const x = star.x + Math.sin(time * 0.00042 + star.seed * 9) * width * 0.003 * star.depth + velocity * 0.014 * star.depth;
-    const y = star.y - scrollProgress * height * (0.1 + star.depth * 0.24) + velocity * 0.018 * star.depth;
-    const radius = star.radius * flicker;
+  /* --- Layer baking (stars + paths + source glow → offscreen canvases) --- */
+  const repIndex = (depth) => (depth >= 0.75 ? 2 : depth >= 0.45 ? 1 : 0);
 
-    if (y < -radius * 4 || y > height + radius * 4 || x < -radius * 4 || x > width + radius * 4) return;
-
-    const gradient = context.createRadialGradient(x, y, 0, x, y, radius * 2.2);
+  const renderStarToLayer = (ctx, star, palette) => {
+    const radius = star.radius;
+    const gradient = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, radius * 2.2);
     gradient.addColorStop(0, `rgba(${palette.rgb}, ${0.7 * star.power * palette.starScale})`);
     gradient.addColorStop(0.18, `rgba(${palette.rgb}, ${0.28 * star.power * palette.starScale})`);
     gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.arc(x, y, radius * 2.2, 0, Math.PI * 2);
-    context.fill();
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(star.x, star.y, radius * 2.2, 0, Math.PI * 2);
+    ctx.fill();
 
-    context.strokeStyle = `rgba(${palette.rgb}, ${(compact ? 0.36 : 0.56) * palette.starScale})`;
-    context.lineWidth = Math.max(0.7, star.power);
-    context.beginPath();
-    for (let ray = 0; ray < (compact ? Math.min(star.rays, 6) : star.rays); ray += 1) {
+    ctx.strokeStyle = `rgba(${palette.rgb}, ${0.36 * palette.starScale})`;
+    ctx.lineWidth = Math.max(0.7, star.power);
+    ctx.beginPath();
+    for (let ray = 0; ray < Math.min(star.rays, 6); ray += 1) {
       const angle = (Math.PI * 2 * ray) / star.rays + star.seed * Math.PI;
-      const rayLength = radius * star.rayLengths[ray] * (compact ? 0.72 : 1);
-      context.moveTo(x - Math.cos(angle) * radius * 0.18, y - Math.sin(angle) * radius * 0.18);
-      context.lineTo(x + Math.cos(angle) * rayLength, y + Math.sin(angle) * rayLength);
+      const rayLength = radius * star.rayLengths[ray] * 0.72;
+      ctx.moveTo(star.x - Math.cos(angle) * radius * 0.18, star.y - Math.sin(angle) * radius * 0.18);
+      ctx.lineTo(star.x + Math.cos(angle) * rayLength, star.y + Math.sin(angle) * rayLength);
     }
-    context.stroke();
+    ctx.stroke();
 
-    context.fillStyle = `rgba(${palette.rgb}, ${palette.light ? 0.72 : 0.96})`;
-    context.beginPath();
-    context.arc(x, y, Math.max(1.1, radius * 0.16), 0, Math.PI * 2);
-    context.fill();
+    ctx.fillStyle = `rgba(${palette.rgb}, ${palette.coreScale})`;
+    ctx.beginPath();
+    ctx.arc(star.x, star.y, Math.max(1.1, radius * 0.16), 0, Math.PI * 2);
+    ctx.fill();
   };
 
-  const drawSource = (time, compact, palette) => {
-    const pulse = reducedMotion ? 1 : 0.94 + Math.sin(time * 0.002) * 0.06;
-    const x = source.x + Math.sin(time * 0.0008) * width * 0.006;
-    const y = source.y + Math.cos(time * 0.0007) * height * 0.018 - scrollProgress * height * 0.08;
-    const radius = Math.max(width, height) * (compact ? 0.09 : 0.13) * pulse;
-    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+  const renderLayers = (palette, channelKey) => {
+    layerBaseHeight = height;
+    layerChannel = channelKey === undefined ? Math.round(255 * (1 - canvasThemeMix)) : channelKey;
+    const contexts = [];
 
-    gradient.addColorStop(0, `rgba(${palette.rgb}, ${palette.sourceScale})`);
-    gradient.addColorStop(0.26, `rgba(${palette.rgb}, ${palette.sourceScale * 0.58})`);
-    gradient.addColorStop(1, `rgba(${palette.rgb}, 0)`);
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.arc(x, y, radius, 0, Math.PI * 2);
-    context.fill();
+    layerStore = LAYER_DEPTHS.map((rep, index) => {
+      // Tall enough for the full scroll drift of this depth, plus margin so
+      // mobile URL-bar viewport changes don't force a mid-scroll re-render.
+      const layerHeight = Math.ceil(height * (1.38 + rep * 0.24));
+      const layer = document.createElement("canvas");
+      layer.width = Math.max(1, Math.floor(width * pixelRatio));
+      layer.height = Math.max(1, Math.floor(layerHeight * pixelRatio));
+      const ctx = layer.getContext("2d");
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      contexts.push(ctx);
+      return { canvas: layer, rep, layerHeight, seed: index * 7.31 + 1.7, offsetX: 0, offsetY: 0 };
+    });
+
+    paths.forEach((path) => {
+      const ctx = contexts[repIndex(path.depth)];
+      const baseAlpha = path.kind === "primary" ? 0.72 : path.kind === "branch" ? 0.42 : 0.22;
+      if (palette.haloScale > 0.01 && (path.kind === "primary" || path.kind === "branch")) {
+        const haloAlpha = path.kind === "primary" ? 0.18 : 0.07;
+        ctx.strokeStyle = `rgba(${palette.rgb}, ${haloAlpha * palette.haloScale})`;
+        ctx.lineWidth = path.lineWidth * 1.6;
+        drawPolyline(path.points, ctx);
+      }
+      ctx.strokeStyle = `rgba(${palette.rgb}, ${baseAlpha * palette.baseScale})`;
+      ctx.lineWidth = path.lineWidth;
+      drawPolyline(path.points, ctx);
+    });
+
+    stars.forEach((star) => renderStarToLayer(contexts[repIndex(star.depth)], star, palette));
+
+    // The source glow is a radially symmetric gradient — bake it small once
+    // and blit it scaled, instead of filling a near-viewport-size gradient
+    // arc every frame.
+    const spriteSize = 256;
+    if (!sourceSprite) sourceSprite = document.createElement("canvas");
+    sourceSprite.width = spriteSize;
+    sourceSprite.height = spriteSize;
+    const spriteCtx = sourceSprite.getContext("2d");
+    spriteCtx.clearRect(0, 0, spriteSize, spriteSize);
+    const glow = spriteCtx.createRadialGradient(
+      spriteSize / 2,
+      spriteSize / 2,
+      0,
+      spriteSize / 2,
+      spriteSize / 2,
+      spriteSize / 2
+    );
+    glow.addColorStop(0, `rgba(${palette.rgb}, ${Math.max(0, palette.sourceScale)})`);
+    glow.addColorStop(0.26, `rgba(${palette.rgb}, ${Math.max(0, palette.sourceScale * 0.58)})`);
+    glow.addColorStop(1, `rgba(${palette.rgb}, 0)`);
+    spriteCtx.fillStyle = glow;
+    spriteCtx.fillRect(0, 0, spriteSize, spriteSize);
+
+    attachField();
+  };
+
+  // Present the freshly-baked layers as compositor-promoted DOM canvases.
+  // The source glow sprite is attached once (it's reused and repainted in
+  // place); the depth layers are recreated on every re-bake, so the old ones
+  // are swapped out here.
+  const attachField = () => {
+    if (!sourceAttached && sourceSprite) {
+      sourceSprite.className = "nerve-source";
+      fieldContainer.insertBefore(sourceSprite, fieldContainer.firstChild);
+      sourceAttached = true;
+    }
+    layerEls.forEach((el) => el.remove());
+    layerEls = layerStore.map((layer) => {
+      const el = layer.canvas;
+      el.className = "nerve-layer";
+      el.style.width = `${width}px`;
+      el.style.height = `${layer.layerHeight}px`;
+      fieldContainer.appendChild(el); // far → near (paint order)
+      return el;
+    });
+  };
+
+  // --- Mobile: no rAF loop at all ---
+  // On compact/touch the parallax is expressed once as a CSS transform that
+  // multiplies the shared `--scroll` variable (updated by the scroll handler
+  // on the field element itself). The compositor then slides the cached layer
+  // textures with zero per-frame JavaScript and zero repaint — the cheapest
+  // possible "animation". The ambient wobble / pulses / smooth tint-crossover
+  // are desktop-only luxuries.
+  const positionFieldCSS = () => {
+    layerStore.forEach((layer, index) => {
+      const el = layerEls[index];
+      if (!el) return;
+      const driftPx = height * (0.1 + layer.rep * 0.24);
+      el.style.opacity = "1";
+      el.style.transform = `translate3d(0, calc(var(--scroll, 0) * ${(-driftPx).toFixed(1)}px), 0)`;
+    });
+    if (sourceAttached) {
+      const radius = Math.max(width, height) * 0.09;
+      const scale = (radius * 2) / 256;
+      const driftPx = height * 0.08;
+      sourceSprite.style.transform =
+        `translate3d(${(source.x - radius).toFixed(1)}px, calc(${(source.y - radius).toFixed(1)}px - var(--scroll, 0) * ${driftPx.toFixed(1)}px), 0) scale(${scale.toFixed(4)})`;
+    }
+  };
+
+  // Bake (only when the theme channel flips or the viewport height drifts) and
+  // pin the CSS parallax. Called from the scroll handler on mobile instead of
+  // scheduling a draw frame.
+  const ensureLayers = () => {
+    if (!paths.length) return; // background not built yet (deferred start)
+    const palette = getPalette(); // snaps canvasThemeMix on compact
+    const channel = Math.round(255 * (1 - canvasThemeMix));
+    const stale =
+      !layerStore.length ||
+      channel !== layerChannel ||
+      Math.abs(height - layerBaseHeight) > layerBaseHeight * 0.24;
+    if (stale) {
+      renderLayers(palette, channel); // → attachField (new layer elements)
+      positionFieldCSS();
+    }
   };
 
   const buildNetwork = () => {
     const compact = isCompactCanvas();
-    const primaryCount = compact ? 16 : 20;
-    const branchPerPrimary = compact ? 3 : 4;
+    const primaryCount = compact ? 14 : lowSpec ? 16 : 20;
+    const branchPerPrimary = compact ? 3 : lowSpec ? 3 : 4;
     const microPerPrimary = compact ? 1 : 2;
     // Full height spread — nerves fan from top to bottom like the reference
     const seed = Math.round(width * 17 + height * 3 + (compact ? 1009 : 2003));
@@ -467,8 +797,8 @@
         // Stars at every branch junction
         addStar(anchor, branchDepth, randomBetween(0.5, compact ? 0.95 : 1.1));
 
-        // Two levels of twigs per branch
-        for (let twig = 0; twig < 2; twig += 1) {
+        const twigCount = 2;
+        for (let twig = 0; twig < twigCount; twig += 1) {
           const twigAnchor = choose(branchPath.slice(1, -1));
           const twigLength = branchLength * randomBetween(0.18, 0.42);
           const twigSide = randomValue() > 0.5 ? 1 : -1;
@@ -511,7 +841,15 @@
 
     stars = stars
       .sort((a, b) => b.power - a.power)
-      .slice(0, compact ? 34 : 42);
+      .slice(0, compact ? 30 : 42);
+    // Live pulses ride the main trunks; everything else is baked into layers.
+    // Compact keeps a sparse set (every 3rd primary); desktop lights more of
+    // the denser network for a little extra life without re-stroking paths.
+    pulsePaths = paths
+      .filter((path) => path.kind === "primary")
+      .filter((_, index) => index % (compact ? 3 : 2) === 0);
+    layerChannel = -1;
+    layerStore = [];
     networkSignature = `${networkMode}:${paths.length}:${stars.length}:${Math.round(source.x)}:${Math.round(source.y)}:${paths
       .slice(0, 8)
       .map((path) => `${path.kind}:${Math.round(path.points[0].x)},${Math.round(path.points[0].y)}`)
@@ -519,68 +857,107 @@
     writeProofState();
   };
 
-  const draw = (time = performance.now()) => {
+  const draw = (time = performance.now(), force = false) => {
     animationFrame = 0;
-    if (document.hidden) {
+    if (document.hidden && !force) {
       return;
+    }
+    if (!paths.length) {
+      return; // background not built yet (deferred start)
     }
 
     const compact = isCompactCanvas();
+    // Compact is driven entirely by CSS (no draw loop). If a frame was still
+    // queued when the layout crossed into compact, bail to the CSS path.
+    if (compact) {
+      ensureLayers();
+      return;
+    }
     const active = !reducedMotion;
-    // Steady ~24fps on desktop, ~15fps on mobile — smooth for ambient motion, far cheaper.
-    const frameGap = compact ? 42 : 42;
+    // Responsive cadence while scrolling, calmer ambient cadence at rest.
+    const recentlyActive = time < activeUntil || Math.abs(scrollVelocity) > 0.2;
+    const frameGap = recentlyActive ? 50 : 84;
+    lastFrameGap = frameGap;
 
-    if (active && time - lastFrameTime < frameGap) {
+    if (active && !force && time - lastFrameTime < frameGap) {
       requestNerveDraw(Math.max(16, frameGap - (time - lastFrameTime)));
       return;
     }
 
     lastFrameTime = time;
+    drawCount += 1;
 
-    const motion = reducedMotion ? 0 : clamp(Math.abs(scrollVelocity) / 110, 0, 1);
     const palette = getPalette();
+
+    // The static network renders from pre-baked depth layers; each frame is a
+    // few transform writes (parallax drift + velocity offset) with a handful
+    // of live pulses stroked on the small overlay canvas.
+    const channel = Math.round(255 * (1 - canvasThemeMix));
+    // Desktop tint follows the page theme smoothly; quantize the re-bake
+    // trigger so the layers don't re-render every frame through the crossover.
+    const channelKey = Math.round(channel / 16) * 16;
+    if (
+      !layerStore.length ||
+      channelKey !== layerChannel ||
+      Math.abs(height - layerBaseHeight) > layerBaseHeight * 0.24
+    ) {
+      renderLayers(palette, channelKey);
+    }
+
+    const velocity = clamp(scrollVelocity, -150, 150);
+    // The pulse overlay is the only surface we rasterize each frame now.
     context.clearRect(0, 0, width, height);
     context.lineCap = "round";
     context.lineJoin = "round";
-    context.globalCompositeOperation = palette.compositeOp;
 
-    drawSource(time, compact, palette);
+    // Source glow — slide + scale the cached 256px sprite (compositor only).
+    const sourcePulse = reducedMotion ? 1 : 0.94 + Math.sin(time * 0.002) * 0.06;
+    const sourceX = source.x + Math.sin(time * 0.0008) * width * 0.006;
+    const sourceY = source.y + Math.cos(time * 0.0007) * height * 0.018 - scrollProgress * height * 0.08;
+    const sourceRadius = Math.max(width, height) * 0.13 * sourcePulse;
+    if (sourceAttached) {
+      const scale = (sourceRadius * 2) / 256;
+      sourceSprite.style.transform = `translate3d(${(sourceX - sourceRadius).toFixed(2)}px, ${(sourceY - sourceRadius).toFixed(2)}px, 0) scale(${scale.toFixed(4)})`;
+    }
 
-    paths.forEach((path, index) => {
-      const points = shiftedPoints(path, time, compact);
-      const baseAlpha = path.kind === "primary" ? 0.72 : path.kind === "branch" ? 0.42 : 0.22;
-      const haloAlpha = path.kind === "primary" ? 0.18 : path.kind === "branch" ? 0.07 : 0.035;
-      const flicker = active ? 0.88 + Math.sin(time * 0.0026 + path.seed * 30) * 0.12 : 1;
-
-      // Halo only on the heavier primary/branch strokes in dark mode (skips thousands of cheap-but-additive twig passes).
-      if (!palette.light && path.kind !== "twig" && path.kind !== "micro") {
-        context.strokeStyle = `rgba(${palette.rgb}, ${(haloAlpha * flicker + motion * 0.03) * palette.haloScale})`;
-        context.lineWidth = path.lineWidth * (compact ? 1.6 : 2);
-        drawPolyline(points);
-      }
-
-      context.strokeStyle = `rgba(${palette.rgb}, ${(baseAlpha * flicker + motion * 0.07) * palette.baseScale})`;
-      context.lineWidth = path.lineWidth;
-      drawPolyline(points);
-
-      if (active && index % (compact ? 10 : 6) === 0) {
-        const t = (time * (compact ? 0.00012 : 0.00018) * (1.2 + path.seed) + path.seed + scrollProgress * 0.6) % 1;
-        drawPulse(
-          points,
-          t,
-          compact ? 0.1 : 0.13,
-          compact ? 0.28 : 0.48,
-          path.lineWidth + (compact ? 0.55 : 1.05),
-          palette
-        );
+    // Depth layers — parallax drift + velocity offset + faint ambient wobble,
+    // applied as a transform on the cached layer textures (GPU-composited).
+    layerStore.forEach((layer, index) => {
+      const drift = height * (0.1 + layer.rep * 0.24) * scrollProgress;
+      const ox =
+        velocity * 0.014 * layer.rep +
+        (reducedMotion ? 0 : Math.sin(time * 0.00042 + layer.seed * 9) * width * 0.003 * layer.rep);
+      const oy = -drift + velocity * 0.018 * layer.rep;
+      layer.offsetX = ox;
+      layer.offsetY = oy;
+      const el = layerEls[index];
+      if (el) {
+        el.style.transform = `translate3d(${ox.toFixed(2)}px, ${oy.toFixed(2)}px, 0)`;
+        el.style.opacity = reducedMotion ? "1" : (0.9 + Math.sin(time * 0.0026 + layer.seed * 30) * 0.1).toFixed(3);
       }
     });
 
-    stars.forEach((star) => drawStar(star, time, compact, palette));
-    context.globalCompositeOperation = "source-over";
+    if (active) {
+      pulsePaths.forEach((path) => {
+        const layer = layerStore[repIndex(path.depth)];
+        const t = (time * 0.00012 * (1.2 + path.seed) + path.seed + scrollProgress * 0.6) % 1;
+        context.save();
+        context.translate(layer.offsetX, layer.offsetY);
+        drawPulse(path.points, t, 0.12, 0.4, path.lineWidth + 0.8, palette);
+        context.restore();
+      });
+    }
 
-    scrollVelocity *= compact ? 0.62 : 0.72;
-    requestNerveDraw();
+    scrollVelocity *= 0.72;
+
+    // Ambient pulses keep running for a short grace period after the reader
+    // stops, then the loop sleeps — re-woken by scroll / resize /
+    // visibilitychange / pageshow via wakeCanvas(), so nothing is lost.
+    const stillBusy = time < activeUntil || Math.abs(scrollVelocity) > 0.25;
+    canvasIdleFrames = stillBusy ? 0 : canvasIdleFrames + 1;
+    if (canvasIdleFrames < 90) {
+      requestNerveDraw();
+    }
   };
 
   requestNerveDraw = (delay = 0) => {
@@ -601,7 +978,9 @@
     const compact = isCompactCanvas();
     const nextWidth = window.innerWidth;
     const nextHeight = window.innerHeight;
-    const nextPixelRatio = Math.min(window.devicePixelRatio || 1, compact ? 2 : 1.5);
+    // DPR is capped at 1 on every device: the network is atmosphere behind
+    // content, and a full-screen retina backing store is pure fill-rate cost.
+    const nextPixelRatio = Math.min(window.devicePixelRatio || 1, 1);
     const widthChanged = Math.abs(nextWidth - width) > 1;
     const pixelRatioChanged = Math.abs(nextPixelRatio - pixelRatio) > 0.01;
     const modeChanged = networkMode !== "" && networkMode !== (compact ? "compact" : "desktop");
@@ -627,13 +1006,46 @@
       frameTimer = 0;
     }
     writeProofState();
-    requestNerveDraw();
+    if (compact) {
+      // No draw loop on mobile — clear the (now-unused) pulse overlay in case
+      // we just switched down from desktop, then pin the CSS parallax.
+      context.clearRect(0, 0, width, height);
+      ensureLayers();
+      positionFieldCSS();
+    } else {
+      requestNerveDraw();
+    }
   };
 
   const requestResize = () => {
     window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(resize, 140);
   };
+
+  /* ----------------------------------------------------------------
+     1.7 Deferred start + debug surface.
+     The network build + first bake cost tens of milliseconds on a
+     phone. Nothing above the fold depends on them (the CSS
+     .background-field gradient covers the gap), so they wait for the
+     browser's first idle slice instead of blocking first paint.
+     ---------------------------------------------------------------- */
+  const startBackground = () => {
+    if (backgroundStarted) return;
+    backgroundStarted = true;
+    resize(true);
+    window.addEventListener("resize", requestResize, { passive: true });
+  };
+
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(startBackground, { timeout: 600 });
+  } else {
+    window.setTimeout(startBackground, 80);
+  }
+
+  window.addEventListener("pageshow", () => wakeCanvas(260));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) wakeCanvas(520);
+  });
 
   window.__nerveDebug = {
     snapshot: () => ({
@@ -650,11 +1062,662 @@
       networkHeight,
       networkMode,
       scrollProgress,
+      drawCount,
+      frameGap: lastFrameGap,
+      layerCount: layerStore.length,
+      active: performance.now() < activeUntil,
+      reducedMotion,
+      lowPower: lowPowerMotion,
+      lowSpec,
+      backgroundStarted,
+      ready: bootDone,
+      renderer: "canvas2d-prebaked-layers",
+      themeIsLight,
+      fx: () => (window.__nerveFx ? window.__nerveFx.snapshot() : null),
       canvasReady: true,
     }),
+    // Dismiss the boot loader immediately (hidden-tab testing).
+    finishBoot: markReady,
+    // Force one frame even in a hidden/preview tab (rAF never fires there).
+    renderOnce: () => {
+      startBackground();
+      activeUntil = performance.now() + 600;
+      lastFrameTime = 0;
+      draw(performance.now(), true);
+    },
+    // Run the scroll spine (theme + --scroll) synchronously — same story.
+    syncScroll: () => {
+      updateScroll();
+    },
   };
+})();
 
-  resize(true);
-  window.addEventListener("resize", requestResize, { passive: true });
-  window.addEventListener("pageshow", () => wakeCanvas(260));
+/* =====================================================================
+   2. FX — scroll-motion coordinator.
+   One rAF tick turns scroll position + velocity into CSS variables and
+   class state; everything visual lives in CSS scoped under body.fx.
+
+   Two motion plans, split at 960px:
+   - Wide (961+): scroll-linked scrubs — pinned services sweep, pinned
+     method stages, manifesto phrase/polarizer band, velocity springs.
+   - Compact (≤960): NO per-frame section work. Manifesto, method and
+     services are driven by IntersectionObservers (one-shot reveals and
+     a stepped stage band) so a scroll frame writes at most one hero
+     variable. The springs are zeroed.
+
+   Skipped entirely for reduced motion and the admin shell.
+   ===================================================================== */
+(function () {
+  const root = document.documentElement;
+  const body = document.body;
+  if (body.classList.contains("admin-body")) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  body.classList.add("fx");
+
+  try {
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const svgNS = "http://www.w3.org/2000/svg";
+
+    const main = document.querySelector("main");
+    const hero = document.querySelector(".hero");
+    const heroTitle = document.querySelector(".hero h1");
+    const manifesto = document.querySelector(".manifesto");
+    const phrases = Array.from(document.querySelectorAll(".manifesto .phrase"));
+    const polarizeEl = document.querySelector("[data-polarize]");
+    const methodPin = document.querySelector("[data-method-pin]");
+    const methodStage = document.querySelector(".method-stage");
+    const methodMoves = Array.from(document.querySelectorAll(".method-move"));
+    const methodDots = Array.from(document.querySelectorAll("[data-method-dots] span"));
+    const meterFill = document.querySelector("[data-meter-fill]");
+    const crosshair = document.querySelector("[data-crosshair]");
+    const contactPanel = document.querySelector(".contact-panel");
+    const messageCard = document.querySelector(".message-card");
+    const whatsappButton = document.querySelector(".whatsapp-button");
+    const wideLayout = window.matchMedia("(min-width: 961px)");
+    const compactMotion = window.matchMedia("(max-width: 960px)");
+    if (!main) return;
+
+    /* --------------------------------------------------------------
+       2.1 Hero — split-portal drift directions (consumed by CSS).
+       -------------------------------------------------------------- */
+    const splitWords = heroTitle ? Array.from(heroTitle.querySelectorAll("[data-split]")) : [];
+    splitWords.forEach((word, index) => word.style.setProperty("--dir", index === 0 ? "-1" : "1"));
+
+    /* --------------------------------------------------------------
+       2.2 Manifesto — split copy into polarizer words.
+       Desktop scrubs a band across them per frame; compact gets a
+       one-shot staggered wave (is-wave + per-word --wi delay) when
+       the paragraph enters view. Both read the same spans.
+       -------------------------------------------------------------- */
+    const pwords = [];
+    if (polarizeEl) {
+      const words = polarizeEl.textContent.trim().split(/\s+/);
+      polarizeEl.textContent = "";
+      words.forEach((word, index) => {
+        const span = document.createElement("span");
+        span.className = "pword is-pending";
+        span.dataset.state = "is-pending";
+        span.style.setProperty("--wi", String(index));
+        span.textContent = word;
+        polarizeEl.appendChild(span);
+        if (index < words.length - 1) polarizeEl.appendChild(document.createTextNode(" "));
+        pwords.push(span);
+      });
+    }
+
+    // Compact reveals: phrases slide in one by one, then the polarizer copy
+    // resolves as a single wave. Classes are inert on wide layouts (the CSS
+    // is scoped to ≤960px), so the observers can stay registered across
+    // breakpoint changes without fighting the desktop scrub.
+    if (phrases.length) {
+      const phraseObserver = new IntersectionObserver(
+        (entries) => {
+          entries
+            .filter((entry) => entry.isIntersecting)
+            .forEach((entry, order) => {
+              entry.target.style.setProperty("--reveal-delay", `${order * 110}ms`);
+              entry.target.classList.add("is-in");
+              phraseObserver.unobserve(entry.target);
+            });
+        },
+        { threshold: 0.35 }
+      );
+      phrases.forEach((phrase) => phraseObserver.observe(phrase));
+    }
+
+    if (polarizeEl) {
+      const waveObserver = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          polarizeEl.classList.add("is-wave");
+          waveObserver.disconnect();
+        },
+        { threshold: 0.3 }
+      );
+      waveObserver.observe(polarizeEl);
+    }
+
+    /* --------------------------------------------------------------
+       2.3 Method — capacitor frames + staged narrative.
+       Wide: scroll-scrubbed pin (updateMethod, called from the tick).
+       Compact: an IntersectionObserver band highlights the step under
+       the reader's focus and steps the meter — zero per-frame work.
+       -------------------------------------------------------------- */
+    const makeFrameSvg = (className) => {
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("class", className);
+      svg.setAttribute("viewBox", "0 0 100 100");
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("aria-hidden", "true");
+      const rect = document.createElementNS(svgNS, "rect");
+      rect.setAttribute("x", "0.75");
+      rect.setAttribute("y", "0.75");
+      rect.setAttribute("width", "98.5");
+      rect.setAttribute("height", "98.5");
+      rect.setAttribute("pathLength", "100");
+      svg.appendChild(rect);
+      return svg;
+    };
+
+    methodMoves.forEach((move) => {
+      move.appendChild(makeFrameSvg("capacitor"));
+    });
+
+    let activeStage = 0;
+    let methodStateKey = "";
+
+    const pulseStage = () => {
+      if (!methodStage) return;
+      methodStage.classList.remove("is-advance");
+      void methodStage.offsetWidth;
+      methodStage.classList.add("is-advance");
+    };
+
+    const applyStage = (next, inView) => {
+      const stateKey = `${next}:${inView}`;
+      if (stateKey === methodStateKey) return;
+      const stageChanged = next !== activeStage && methodStateKey !== "";
+      methodStateKey = stateKey;
+
+      activeStage = next;
+      if (stageChanged) pulseStage();
+      methodMoves.forEach((move, index) => {
+        move.classList.toggle("is-active", index === activeStage);
+        move.classList.toggle("is-past", index < activeStage);
+        move.classList.toggle("is-dim", index > activeStage);
+      });
+      methodDots.forEach((dot, index) => dot.classList.toggle("is-active", index === activeStage));
+      if (crosshair && wideLayout.matches) {
+        crosshair.classList.toggle("is-on", inView);
+        const target = moveGeom[activeStage];
+        if (target) {
+          crosshair.style.left = `${target.left - 9}px`;
+          crosshair.style.top = `${target.top - 9}px`;
+          crosshair.style.width = `${target.width + 18}px`;
+          crosshair.style.height = `${target.height + 18}px`;
+        }
+      }
+    };
+
+    // Wide-layout scrub: three even bands across the pinned span.
+    const updateMethod = (scrollY, vh) => {
+      if (!methodPin) return;
+      const top = methodPinTop - scrollY;
+      const bottom = top + methodPinHeight;
+      const inView = top < vh && bottom > 0;
+
+      const span = Math.max(1, methodPinHeight - vh);
+      const progress = clamp(-top / span, 0, 1);
+      const next = progress < 1 / 3 ? 0 : progress < 2 / 3 ? 1 : 2;
+
+      if (meterFill) meterFill.style.transform = `scaleX(${progress.toFixed(4)})`;
+      applyStage(next, inView);
+    };
+
+    // Compact stage band: a step becomes active as it crosses the middle of
+    // the viewport; the meter fills stepwise (CSS eases the jump).
+    if (methodMoves.length) {
+      const stageBand = new IntersectionObserver(
+        (entries) => {
+          if (wideLayout.matches) return;
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            const index = methodMoves.indexOf(entry.target);
+            if (index === -1) return;
+            applyStage(index, true);
+            if (meterFill) {
+              meterFill.style.transform = `scaleX(${((index + 1) / methodMoves.length).toFixed(4)})`;
+            }
+          });
+        },
+        { rootMargin: "-32% 0px -52% 0px" }
+      );
+      methodMoves.forEach((move) => stageBand.observe(move));
+    }
+
+    /* --------------------------------------------------------------
+       2.4 Contact — card construction, transmission, checksum.
+       The number scramble is one rAF-driven pass (shorter on touch),
+       not a pair of intervals.
+       -------------------------------------------------------------- */
+    let transmissionDone = false;
+    if (messageCard) {
+      messageCard.setAttribute("aria-label", `Send the brief on WhatsApp, ${messageCard.querySelector("strong") ? messageCard.querySelector("strong").textContent.trim() : ""}`);
+      messageCard.appendChild(makeFrameSvg("card-trace"));
+      const strong = messageCard.querySelector("strong");
+      if (strong) {
+        const chars = strong.textContent.trim().split("");
+        strong.textContent = "";
+        chars.forEach((ch) => {
+          if (ch === " ") {
+            strong.appendChild(document.createTextNode(" "));
+            return;
+          }
+          const span = document.createElement("span");
+          const isDigit = /\d/.test(ch);
+          span.className = isDigit ? "tx-char tx-digit" : "tx-char is-locked";
+          span.dataset.final = ch;
+          span.textContent = isDigit ? "0" : ch;
+          strong.appendChild(span);
+        });
+      }
+      const checksum = document.createElement("span");
+      checksum.className = "checksum";
+      checksum.setAttribute("aria-hidden", "true");
+      checksum.innerHTML = '<svg viewBox="0 0 24 24" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>';
+      messageCard.appendChild(checksum);
+    }
+
+    const runTransmission = () => {
+      if (transmissionDone || !messageCard) return;
+      transmissionDone = true;
+      const digits = Array.from(messageCard.querySelectorAll(".tx-digit"));
+      const finish = () => {
+        digits.forEach((span) => {
+          span.textContent = span.dataset.final;
+          span.classList.add("is-locked");
+        });
+        const checksum = messageCard.querySelector(".checksum");
+        if (checksum) checksum.classList.add("is-verified");
+        if (whatsappButton) {
+          whatsappButton.classList.add("is-ack");
+          window.setTimeout(() => whatsappButton.classList.remove("is-ack"), 2600);
+        }
+      };
+      if (!digits.length) {
+        finish();
+        return;
+      }
+      const duration = compactMotion.matches ? 950 : 1500;
+      const start = performance.now();
+      let lastShuffle = 0;
+      const step = (now) => {
+        const progress = clamp((now - start) / duration, 0, 1);
+        const lockCount = Math.floor(progress * digits.length);
+        const shuffle = now - lastShuffle > 52;
+        if (shuffle) lastShuffle = now;
+        digits.forEach((span, index) => {
+          if (index < lockCount) {
+            if (!span.classList.contains("is-locked")) {
+              span.textContent = span.dataset.final;
+              span.classList.add("is-locked");
+            }
+          } else if (shuffle) {
+            span.textContent = String(Math.floor(Math.random() * 10));
+          }
+        });
+        if (progress < 1) {
+          window.requestAnimationFrame(step);
+        } else {
+          finish();
+        }
+      };
+      window.requestAnimationFrame(step);
+    };
+
+    if (contactPanel && messageCard) {
+      const contactObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            messageCard.classList.add("is-built");
+            window.setTimeout(runTransmission, 700);
+            contactObserver.disconnect();
+          });
+        },
+        { threshold: 0.18 }
+      );
+      contactObserver.observe(contactPanel);
+    }
+
+    /* --------------------------------------------------------------
+       2.5 Services — per-card entrance everywhere; the pinned
+       diagnostic sweep (beam + counter) is wide-layout only.
+       -------------------------------------------------------------- */
+    const servicesSection = document.querySelector(".services");
+    const servicesPinEl = document.querySelector("[data-services-pin]");
+    const servicesBeam = document.querySelector(".services-beam");
+    const servicesCount = document.querySelector("[data-services-count]");
+    const servicesGrid = document.querySelector("[data-services-grid]");
+    const serviceCards = servicesGrid ? Array.from(servicesGrid.querySelectorAll(".service-card")) : [];
+    if (servicesSection) servicesSection.classList.add("is-pinned");
+    // Riser entrance: service cards AND method steps ease in as they reach
+    // the viewport, with a per-batch stagger (--reveal-delay, consumed by
+    // the compact CSS). On desktop the pinned sweep takes over the service
+    // card states and method steps ignore .is-in; on mobile this is the
+    // entrance.
+    const riseItems = serviceCards.concat(methodMoves);
+    if (riseItems.length) {
+      const riseObserver = new IntersectionObserver(
+        (entries) => {
+          entries
+            .filter((entry) => entry.isIntersecting)
+            .forEach((entry, order) => {
+              entry.target.style.setProperty("--reveal-delay", `${Math.min(order * 90, 270)}ms`);
+              entry.target.classList.add("is-in");
+              riseObserver.unobserve(entry.target);
+            });
+        },
+        { threshold: 0.12, rootMargin: "0px 0px -6% 0px" }
+      );
+      riseItems.forEach((item) => riseObserver.observe(item));
+    }
+
+    let servicesLit = -1;
+    let servicesOnline = false;
+    let servicesCurrent = -1;
+
+    const updateServices = (scrollY, vh) => {
+      if (!servicesSection || !servicesPinEl || !servicesGrid || !serviceCards.length) return;
+      if (!wideLayout.matches) return;
+
+      const top = servicesPinTop - scrollY;
+      const span = Math.max(1, svcPinHeight - vh);
+      const progress = clamp(-top / span, 0, 1);
+      const beamP = clamp((progress - 0.08) / 0.66, 0, 1);
+      const gridWidth = svcGridWidth;
+      const scaled = beamP * serviceCards.length;
+      const currentCard = beamP >= 1 ? serviceCards.length - 1 : Math.min(serviceCards.length - 1, Math.floor(scaled));
+      const beamX = beamP * gridWidth;
+
+      if (servicesBeam) {
+        servicesBeam.style.transform = `translateX(${beamX.toFixed(1)}px)`;
+        const fade = beamP <= 0 || beamP >= 1 ? 0 : Math.min(1, Math.min(beamP, 1 - beamP) / 0.07);
+        servicesBeam.style.opacity = fade.toFixed(2);
+      }
+
+      let lit = serviceCards.reduce(
+        (count, card, index) =>
+          count + (beamP > 0.01 && svcCardLeft[index] + svcCardWidth[index] * 0.5 <= beamX + 8 ? 1 : 0),
+        0
+      );
+
+      lit = clamp(lit, 0, serviceCards.length);
+      if (currentCard !== servicesCurrent || lit !== servicesLit) {
+        servicesCurrent = currentCard;
+        serviceCards.forEach((card, index) => {
+          card.classList.toggle("is-lit", index < lit);
+        });
+      }
+
+      if (servicesCount && lit !== servicesLit) {
+        servicesLit = lit;
+        servicesCount.textContent = String(lit).padStart(2, "0");
+        servicesCount.classList.remove("tick");
+        void servicesCount.offsetWidth;
+        servicesCount.classList.add("tick");
+      }
+
+      const online = progress > 0.85;
+      if (online !== servicesOnline) {
+        servicesOnline = online;
+        servicesGrid.classList.toggle("is-online", online);
+      }
+    };
+
+    /* --------------------------------------------------------------
+       2.6 Cached layout geometry.
+       The pinned controllers used to read offsetLeft/Top/Width/Height
+       every scroll frame, right after writing styles in the same
+       frame — forcing a synchronous reflow each time. This geometry
+       only changes on resize / breakpoint cross, so measure it once
+       and reuse it during scroll.
+       -------------------------------------------------------------- */
+    let svcGridWidth = 0;
+    let svcPinHeight = 0;
+    let methodPinHeight = 0;
+    let servicesPinTop = 0;
+    let methodPinTop = 0;
+    let heroHeight = 1;
+    let fxMaxScroll = 1;
+    let manifestoTop = 0;
+    let manifestoHeight = 0;
+    let polarizeTop = 0;
+    let phraseTops = phrases.map(() => 0);
+    const svcCardLeft = new Array(serviceCards.length).fill(0);
+    const svcCardWidth = new Array(serviceCards.length).fill(0);
+    let moveGeom = methodMoves.map(() => ({ left: 0, top: 0, width: 0, height: 0 }));
+
+    const measureGeom = () => {
+      methodStateKey = "";
+      servicesCurrent = -1;
+      servicesLit = -1;
+      fxMaxScroll = Math.max(1, root.scrollHeight - window.innerHeight);
+      if (servicesGrid) svcGridWidth = servicesGrid.offsetWidth;
+      if (servicesPinEl) {
+        svcPinHeight = servicesPinEl.offsetHeight;
+        servicesPinTop = servicesPinEl.getBoundingClientRect().top + window.scrollY;
+      }
+      if (methodPin) {
+        methodPinHeight = methodPin.offsetHeight;
+        methodPinTop = methodPin.getBoundingClientRect().top + window.scrollY;
+      }
+      if (hero) heroHeight = hero.offsetHeight;
+      if (manifesto) {
+        const rect = manifesto.getBoundingClientRect();
+        manifestoTop = rect.top + window.scrollY;
+        manifestoHeight = rect.height;
+      }
+      phraseTops = phrases.map((phrase) => phrase.getBoundingClientRect().top + window.scrollY);
+      if (polarizeEl) polarizeTop = polarizeEl.getBoundingClientRect().top + window.scrollY;
+      serviceCards.forEach((card, index) => {
+        svcCardLeft[index] = card.offsetLeft;
+        svcCardWidth[index] = card.offsetWidth;
+      });
+      moveGeom = methodMoves.map((move) => ({
+        left: move.offsetLeft,
+        top: move.offsetTop,
+        width: move.offsetWidth,
+        height: move.offsetHeight,
+      }));
+    };
+
+    /* --------------------------------------------------------------
+       2.7 Master tick — velocity springs (wide only) + scrubs.
+       Compact does one hero-progress write per frame and nothing else;
+       all compact section motion is observer-driven above.
+       -------------------------------------------------------------- */
+    let lastY = window.scrollY;
+    let velocity = 0;
+    let servo = 0;
+    let servoVel = 0;
+    let rafId = 0;
+    let idleFrames = 0;
+    let settleFrames = 0;
+    let lastTime = performance.now();
+    let layoutDirty = true;
+
+    const varCache = {};
+    const setVar = (name, value) => {
+      if (varCache[name] === value) return;
+      varCache[name] = value;
+      root.style.setProperty(name, value);
+    };
+
+    // --hero-p is consumed only inside .hero, so it lives on the hero
+    // element — writing it there invalidates one subtree, not the document.
+    let heroPCache = "";
+    const setHeroP = (value) => {
+      if (heroPCache === value) return;
+      heroPCache = value;
+      hero.style.setProperty("--hero-p", value);
+    };
+
+    const zeroMotionVars = () => {
+      velocity = 0;
+      servo = 0;
+      servoVel = 0;
+      setVar("--servo", "0");
+      setVar("--endp", "0");
+    };
+
+    const tick = (time) => {
+      rafId = 0;
+      const dt = clamp((time - lastTime) / 16.67, 0.25, 3);
+      lastTime = time;
+      const scrollY = window.scrollY;
+      const vh = window.innerHeight;
+      const dy = scrollY - lastY;
+      const compact = compactMotion.matches;
+      lastY = scrollY;
+      const updateLayout = layoutDirty || dy !== 0;
+      layoutDirty = false;
+
+      if (compact) {
+        // Touch devices skip the velocity skew / servo springs entirely:
+        // micro-transforms on huge type read as jitter on a phone, and each
+        // one is another style pass per frame.
+        zeroMotionVars();
+      } else {
+        const keep = Math.pow(0.82, dt);
+        velocity = velocity * keep + dy * (1 - keep);
+
+        const pageProgress = clamp(scrollY / fxMaxScroll, 0, 1);
+        const endP = clamp((pageProgress - 0.92) / 0.08, 0, 1);
+        const damp = 1 - endP * 0.85; // footer energy collapse damps everything
+
+        // servo cooldown: one underdamped spring chasing a velocity offset.
+        const servoTarget = clamp(velocity * 0.16, -16, 16) * damp;
+        servoVel += (servoTarget - servo) * 0.16 * dt;
+        servoVel *= Math.pow(0.86, dt);
+        servo += servoVel * dt;
+
+        setVar("--servo", servo.toFixed(2));
+        setVar("--endp", endP.toFixed(3));
+      }
+
+      if (updateLayout) {
+        if (hero) {
+          const heroP = clamp(scrollY / Math.max(1, heroHeight * 0.85), 0, 1);
+          setHeroP(heroP.toFixed(3));
+        }
+
+        // Manifesto scrub, method pin and services sweep are wide-layout
+        // only — compact equivalents are observer-driven (no frame work).
+        if (!compact) {
+          if (manifesto) {
+            const mTop = manifestoTop - scrollY;
+            if (mTop + manifestoHeight > -200 && mTop < vh + 200) {
+              phrases.forEach((phrase, index) => {
+                const top = phraseTops[index] - scrollY;
+                const raw = clamp((vh * 0.98 - top) / (vh * 0.38), 0, 1);
+                const eased = raw * (2 - raw);
+                const dir = phrase.dataset.dir === "right" ? 1 : -1;
+                phrase.style.setProperty("--po", eased.toFixed(3));
+                phrase.style.setProperty("--px", `${((1 - eased) * dir * 72).toFixed(1)}px`);
+              });
+              if (polarizeEl && pwords.length) {
+                const sp = clamp((vh * 0.96 - (polarizeTop - scrollY)) / (vh * 0.5), 0, 1);
+                const band = sp * (pwords.length + 4) - 2;
+                pwords.forEach((word, index) => {
+                  const state =
+                    index < band - 1.4 ? "is-locked" : Math.abs(index - band) <= 1.4 ? "is-live" : "is-pending";
+                  if (word.dataset.state === state) return;
+                  word.dataset.state = state;
+                  word.classList.remove("is-locked", "is-live", "is-pending");
+                  word.classList.add(state);
+                });
+              }
+            }
+          }
+
+          updateMethod(scrollY, vh);
+          updateServices(scrollY, vh);
+        }
+      }
+
+      const busy =
+        Math.abs(velocity) > 0.05 ||
+        Math.abs(servo) > 0.1 ||
+        Math.abs(servoVel) > 0.05;
+      idleFrames = busy || dy !== 0 ? 0 : idleFrames + 1;
+      settleFrames += 1;
+      if ((compactMotion.matches && settleFrames < 18) || (!compactMotion.matches && idleFrames < 30)) {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    const wake = () => {
+      if (rafId) return;
+      lastTime = performance.now();
+      idleFrames = 0;
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    const wakeLayout = () => {
+      layoutDirty = true;
+      settleFrames = 0;
+      wake();
+    };
+
+    window.addEventListener("scroll", wakeLayout, { passive: true });
+
+    let fxResizeTimer = 0;
+    window.addEventListener(
+      "resize",
+      () => {
+        window.clearTimeout(fxResizeTimer);
+        fxResizeTimer = window.setTimeout(() => {
+          measureGeom();
+          wakeLayout();
+        }, 180);
+      },
+      { passive: true }
+    );
+
+    window.addEventListener("load", () => {
+      measureGeom();
+      wakeLayout();
+    });
+    measureGeom();
+    wakeLayout();
+
+    /* --------------------------------------------------------------
+       2.8 Debug surface (window.__nerveFx) — also lets a hidden tab
+       pump the tick manually, since rAF never fires there.
+       -------------------------------------------------------------- */
+    window.__nerveFx = {
+      pump: () => tick(performance.now()),
+      remeasure: () => {
+        measureGeom();
+        wakeLayout();
+      },
+      snapshot: () => ({
+        compact: compactMotion.matches,
+        wide: wideLayout.matches,
+        rafActive: !!rafId,
+        velocity,
+        servo,
+        activeStage,
+        servicesLit,
+        servicesOnline,
+        transmissionDone,
+        pwordCount: pwords.length,
+      }),
+    };
+  } catch (error) {
+    body.classList.remove("fx");
+    throw error;
+  }
 })();
